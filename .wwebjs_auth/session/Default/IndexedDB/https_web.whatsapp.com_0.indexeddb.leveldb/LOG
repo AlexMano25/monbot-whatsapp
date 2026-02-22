@@ -1,0 +1,26 @@
+2026/02/22-23:21:36.928 e473a Reusing MANIFEST /Users/all/Documents/Mano_Verde_SA/MonBot/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/02/22-23:21:36.929 e473a Recovering log #368
+2026/02/22-23:21:36.955 e473a Reusing old log /Users/all/Documents/Mano_Verde_SA/MonBot/.wwebjs_auth/session/Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/000368.log 
+2026/02/22-23:21:42.491 e473c Level-0 table #380: started
+2026/02/22-23:21:42.511 e473c Level-0 table #380: 1273754 bytes OK
+2026/02/22-23:21:42.515 e473c Delete type=0 #368
+2026/02/22-23:21:42.520 e473c Compacting 1@1 + 8@2 files
+2026/02/22-23:21:42.554 e473c Generated table #381@1: 85824 keys, 2235890 bytes
+2026/02/22-23:21:42.581 e473c Generated table #382@1: 60393 keys, 2253047 bytes
+2026/02/22-23:21:42.612 e473c Generated table #383@1: 44534 keys, 2208021 bytes
+2026/02/22-23:21:42.630 e473c Generated table #384@1: 17812 keys, 2174642 bytes
+2026/02/22-23:21:42.640 e473c Generated table #385@1: 4812 keys, 2150164 bytes
+2026/02/22-23:21:42.662 e473c Generated table #386@1: 23436 keys, 2195391 bytes
+2026/02/22-23:21:42.689 e473c Generated table #387@1: 71909 keys, 2212626 bytes
+2026/02/22-23:21:42.702 e473c Generated table #388@1: 33293 keys, 963315 bytes
+2026/02/22-23:21:42.702 e473c Compacted 1@1 + 8@2 files => 16393096 bytes
+2026/02/22-23:21:42.704 e473c compacted to: files[ 0 0 8 0 0 0 0 ]
+2026/02/22-23:21:42.705 e473c Delete type=2 #377
+2026/02/22-23:21:42.705 e473c Delete type=2 #376
+2026/02/22-23:21:42.705 e473c Delete type=2 #374
+2026/02/22-23:21:42.705 e473c Delete type=2 #375
+2026/02/22-23:21:42.705 e473c Delete type=2 #371
+2026/02/22-23:21:42.705 e473c Delete type=2 #370
+2026/02/22-23:21:42.705 e473c Delete type=2 #372
+2026/02/22-23:21:42.705 e473c Delete type=2 #373
+2026/02/22-23:21:42.705 e473c Delete type=2 #380

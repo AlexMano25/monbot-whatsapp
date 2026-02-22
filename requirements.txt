@@ -1,0 +1,13 @@
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+flask
+requests
+python-dotenv
+beautifulsoup4
+lxml
+PyPDF2
+python-docx
+openpyxl
+googlesearch-python

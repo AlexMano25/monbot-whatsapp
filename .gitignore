@@ -1,0 +1,7 @@
+node_modules
+brain_memory.json
+scan_state.json
+.env
+.DS_Store
+credentials.json
+token.json

@@ -1,0 +1,135 @@
+DOC 7B – CATALOGUE DES AVANTAGES ET INDICATEURS D’IMPACT
+FOUR DOMESTIQUE A PYROLYSE / BIOMASSE – MANO VERDE INC SA
+
+1. INTRODUCTION
+Ce catalogue présente les avantages techniques, économiques, sociaux, environnementaux et institutionnels du projet de four domestique à pyrolyse / biomasse, avec indicateurs quantitatifs d'impact.
+
+2. AVANTAGES TECHNIQUES
+
+2.1 Réduction de la consommation de combustible
+Description : Le four permet de réduire la consommation de bois et de charbon de 50 à 70 % par rapport aux foyers trois pierres et foyers traditionnels.
+Indicateur : Quantité de bois économisée par ménage par an.
+Valeur cible : 600 kg de bois économisés par ménage par an (base : consommation traditionnelle 1 200 kg/an).
+Impact cumulé (500 000 ménages sur 10 ans) : 300 000 tonnes de bois économisées par an.
+
+2.2 Valorisation des déchets biomasse
+Description : Le four permet d'utiliser des déchets ménagers organiques, résidus agricoles et biomasse non valorisée comme combustible.
+Indicateur : Quantité de déchets valorisés par ménage par an.
+Valeur cible : 200 kg de déchets valorisés par ménage par an.
+Impact cumulé : 100 000 tonnes de déchets valorisés par an.
+
+2.3 Amélioration du rendement énergétique
+Description : Principe de pyrolyse et recyclage des gaz augmentent le rendement thermique.
+Indicateur : Rendement énergétique (%).
+Valeur cible : 35–45 % (vs 10–15 % foyers trois pierres).
+
+3. AVANTAGES ECONOMIQUES
+
+3.1 Economies pour les ménages
+Description : Réduction des dépenses en bois et charbon.
+Indicateur : Économie annuelle par ménage (FCFA).
+Valeur cible : 30 000 à 50 000 FCFA par ménage par an.
+Retour sur investissement : 6 à 12 mois (prix du foyer 25 000–40 000 FCFA).
+
+3.2 Création d'emplois
+Description : Filière complète de production, distribution, maintenance, sensibilisation.
+Indicateur : Nombre d'emplois directs et indirects créés.
+Valeur cible :
+- Phase pilote (5 000 foyers) : 150 emplois.
+- Déploiement (500 000 foyers sur 10 ans) : 15 000 emplois.
+Types d'emplois : soudeurs, monteurs, distributeurs, formateurs, agents de maintenance, collecteurs de déchets.
+
+3.3 Revenus supplémentaires (crédits carbone)
+Description : Vente de crédits carbone sur marchés volontaires (Gold Standard, Verra).
+Indicateur : Tonnes CO₂e évitées et revenus associés.
+Valeur cible : 3 tCO₂e évitées par ménage par an, prix crédit carbone 5–10 USD/tCO₂e.
+Impact cumulé (500 000 ménages) : 1,5 million tCO₂e évitées par an, revenus 7,5–15 millions USD par an.
+
+4. AVANTAGES SOCIAUX
+
+4.1 Amélioration de la santé
+Description : Réduction de l'exposition aux fumées domestiques, diminution des maladies respiratoires (infections aiguës, pneumonies, BPCO).
+Indicateur : Réduction de l'incidence des maladies respiratoires.
+Valeur cible : Réduction de 30–50 % des cas de maladies respiratoires liées à la fumée domestique.
+Impact : Amélioration de la santé de 2,5 millions de personnes (500 000 ménages × 5 personnes/ménage).
+
+4.2 Autonomisation des femmes
+Description : Réduction du temps consacré à la collecte de bois et à la cuisson, amélioration des conditions de cuisson.
+Indicateur : Temps gagné par jour (heures).
+Valeur cible : 1 à 2 heures gagnées par jour.
+Impact : Temps libéré pour activités génératrices de revenus, éducation, repos.
+
+4.3 Sécurité et protection
+Description : Réduction de l'exposition des femmes et filles aux violences lors de la collecte de bois en zones fragiles.
+Indicateur : Réduction des incidents liés à la collecte de bois.
+Valeur cible : Mesurée par enquêtes dans zones pilotes.
+
+4.4 Education
+Description : Temps gagné par les enfants (notamment filles) impliqués dans la collecte de bois, permettant assiduité scolaire.
+Indicateur : Taux d'assiduité scolaire.
+Valeur cible : Augmentation de 10–15 % dans ménages équipés.
+
+5. AVANTAGES ENVIRONNEMENTAUX
+
+5.1 Réduction de la déforestation
+Description : Diminution de la pression sur les forêts liée à la demande de bois‑énergie.
+Indicateur : Hectares de forêt préservés.
+Valeur cible : 300 000 tonnes de bois économisées par an ≈ 15 000 à 20 000 hectares de forêt préservés par an.
+
+5.2 Réduction des émissions de gaz à effet de serre
+Description : Diminution des émissions de CO₂, méthane et carbone noir.
+Indicateur : Tonnes CO₂e évitées.
+Valeur cible : 3 tCO₂e par ménage par an.
+Impact cumulé (500 000 ménages) : 1,5 million tCO₂e évitées par an.
+Contribution NDC Cameroun : significative (NDC vise réduction 32 % émissions d'ici 2035).
+
+5.3 Réduction de la pollution de l'air intérieur
+Description : Diminution des émissions de particules fines (PM2.5), CO et composés organiques volatils dans les cuisines.
+Indicateur : Concentration de PM2.5 dans l'air intérieur (µg/m³).
+Valeur cible : Réduction de 50–70 % par rapport aux foyers traditionnels.
+
+5.4 Valorisation des déchets et économie circulaire
+Description : Transformation de déchets ménagers organiques en combustible, réduisant déchets non valorisés.
+Indicateur : Quantité de déchets détournés des décharges ou brûlage à ciel ouvert.
+Valeur cible : 100 000 tonnes de déchets valorisés par an.
+
+6. AVANTAGES INSTITUTIONNELS
+
+6.1 Contribution aux engagements climat du Cameroun (NDC)
+Description : Le projet contribue directement à la réalisation des NDC du Cameroun.
+Indicateur : Tonnes CO₂e évitées, hectares de forêt préservés.
+Valeur : 1,5 million tCO₂e/an, 15 000–20 000 ha/an.
+
+6.2 Alignement avec les ODD
+Description : Le projet contribue à multiples ODD.
+ODD concernés :
+- ODD 1 (Pauvreté) : économies pour ménages, emplois.
+- ODD 3 (Santé) : réduction maladies respiratoires.
+- ODD 5 (Genre) : autonomisation des femmes.
+- ODD 7 (Énergie) : accès à cuisson propre.
+- ODD 8 (Travail décent) : emplois locaux.
+- ODD 12 (Consommation responsable) : économie circulaire.
+- ODD 13 (Climat) : réduction émissions GES.
+- ODD 15 (Vie terrestre) : préservation forêts.
+
+6.3 Modèle réplicable régionalement
+Description : Le modèle peut être répliqué dans d'autres pays d'Afrique subsaharienne.
+Indicateur : Nombre de pays intéressés par le transfert de technologie.
+Potentiel : 150 millions de ménages en Afrique centrale et de l'Ouest.
+
+7. SYNTHESE DES IMPACTS QUANTIFIES (PHASE DEPLOIEMENT 10 ANS, 500 000 MENAGES)
+
+| Indicateur | Valeur |
+|------------|--------|
+| Ménages équipés | 500 000 |
+| Personnes bénéficiaires | 2,5 millions |
+| Bois économisé par an | 300 000 tonnes |
+| Déchets valorisés par an | 100 000 tonnes |
+| Forêts préservées par an | 15 000–20 000 hectares |
+| Emissions évitées par an | 1,5 million tCO₂e |
+| Emplois créés | 15 000 |
+| Économies ménages (cumul 10 ans) | 15–25 milliards FCFA |
+| Revenus crédits carbone par an | 7,5–15 millions USD |
+
+8. CONCLUSION
+Le projet de four domestique à pyrolyse / biomasse de MANO VERDE INC SA présente des avantages majeurs et mesurables sur les plans technique, économique, social, environnemental et institutionnel, en faisant un projet à fort impact et à fort potentiel de réplicabilité.
