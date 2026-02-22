@@ -4,7 +4,6 @@ const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
 const path = require("path");
-const pdf = require("pdf-parse");
 const tf = require("@tensorflow/tfjs-node");
 const axios = require("axios");
 
@@ -48,7 +47,7 @@ function fileListFromDirs() {
           walk(full);
         } else {
           const ext = path.extname(entry).toLowerCase();
-          if ([".pdf", ".txt", ".md"].includes(ext)) {
+          if ([".txt", ".md"].includes(ext)) {
             results.push({ path: full, mtimeMs: st.mtimeMs, size: st.size });
           }
         }
@@ -65,11 +64,9 @@ function fileListFromDirs() {
 async function readFileText(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   try {
+    // On ne gère plus les PDF côté serveur pour éviter les problèmes de pdf-parse
     if (ext === ".pdf") {
-      const dataBuffer = fs.readFileSync(filePath);
-      const pdfParse = require("pdf-parse");
-      const data = await pdfParse(dataBuffer);
-      return data.text || "";
+      return "";
     } else {
       return fs.readFileSync(filePath, "utf-8");
     }
