@@ -131,9 +131,9 @@ async function reindexIfNeeded() {
   const files = fileListFromDirs();
   const { memory, scan } = loadState();
 
+  let changed = false;
   const newScan = {};
   const newMemory = [];
-  let changed = false;
 
   console.log("[IA] Fichiers trouvés :", files.length);
 
@@ -225,10 +225,30 @@ async function fetchSiteText(url) {
 }
 
 // =======================
+// UTILITAIRES CONVERSATION
+// =======================
+
+// Récupère quelques messages précédents pour le contexte
+async function getConversationSummary(msg, maxMessages = 5) {
+  try {
+    const chat = await msg.getChat();
+    const messages = await chat.fetchMessages({ limit: maxMessages });
+    const parts = messages
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map(m => `${m.fromMe ? "Moi" : "Client"}: ${m.body}`)
+      .join("\n");
+    return parts;
+  } catch (e) {
+    console.error("[Chat] Impossible de récupérer l'historique:", e.message);
+    return "";
+  }
+}
+
+// =======================
 // APPEL PERPLEXITY + GARDE-FOU
 // =======================
 
-async function callPerplexity(question, context, webContexts) {
+async function callPerplexity(question, context, webContexts, convSummary) {
   try {
     const apiKey = process.env.PERPLEXITY_API_KEY;
     if (!apiKey) {
@@ -244,12 +264,14 @@ async function callPerplexity(question, context, webContexts) {
       "et rester dans le contexte des produits et services de l'entreprise.\n\n" +
       "=== CONTEXTE DOCUMENTS INTERNES ===\n" + (context || "") + "\n\n" +
       "=== CONTEXTE SITES WEB ===\n" + webText + "\n\n" +
+      "=== CONTEXTE CONVERSATION ===\n" + (convSummary || "") + "\n\n" +
       "Règles importantes :\n" +
-      "- Tu utilises toujours le terme « foyer de cuisson amélioré à biomasse » pour parler du produit, " +
-      "jamais « four à pyrolyse ».\n" +
-      "- Tu n'expliques pas la chimie de la pyrolyse, mais la manière d'utiliser le foyer au quotidien " +
-      "(allumage, ajout de biomasse, réglage de l'air, sécurité, confort).\n" +
-      "- Si la question n'a aucun rapport avec ces contextes, dis-le simplement.\n\n" +
+      "- Tu utilises toujours le terme « foyer de cuisson amélioré à biomasse » pour parler du produit, jamais « four à pyrolyse ».\n" +
+      "- Tu n'expliques pas la chimie de la pyrolyse, mais la manière d'utiliser le foyer au quotidien (allumage, ajout de biomasse, réglage de l'air, sécurité, confort).\n" +
+      "- Pour Terrasocial, rappelle que les terrains et les offres sont détaillés sur https://social.manovende.com.\n" +
+      "- Pour tout besoin de contact, tu donnes uniquement : téléphone +237 696 87 58 95, emails direction@manovende.com et infos@manovende.com.\n" +
+      "- Tu écris de façon chaleureuse, comme un humain poli, en gardant les réponses brèves et claires.\n" +
+      "- Si la question n'a aucun rapport avec ces contextes, tu réponds explicitement que tu ne peux pas répondre.\n\n" +
       "Question du client :\n" + question;
 
     const body = {
@@ -300,16 +322,18 @@ async function callPerplexity(question, context, webContexts) {
     reply = reply.replace(/foyer amélioré/gi, "foyer de cuisson amélioré à biomasse");
     reply = reply.replace(/four (ecologique|écolo|écologique)/gi, "foyer de cuisson amélioré à biomasse");
 
+    // Normaliser les contacts
+    reply = reply.replace(/(\+?237)?\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
+    reply = reply.replace(/direction@[a-z0-9.\-]+/gi, "direction@manovende.com");
+    reply = reply.replace(/infos?@[a-z0-9.\-]+/gi, "infos@manovende.com");
+
+    // URL terrains
+    reply = reply.replace(/https?:\/\/[^\s]+/gi, "https://social.manovende.com");
+
     // Limiter la longueur
-    if (reply.length > 900) {
-      reply = reply.slice(0, 900) + " [...]";
+    if (reply.length > 700) {
+      reply = reply.slice(0, 700) + " [...]";
     }
-
-    const intro =
-      "Bonjour, je suis l'assistant de Mano Verde / Manovende.\n" +
-      "Pouvez-vous préciser en quelques mots votre besoin (terrain Terrasocial, foyer de cuisson amélioré à biomasse, internet, autre) ?\n\n";
-
-    reply = intro + reply;
 
     return reply;
   } catch (e) {
@@ -352,19 +376,16 @@ client.on("message", async msg => {
 
     console.log("[MSG] Reçu:", from, "->", to, "|", msg.body);
 
-    // 1) Ignorer tous les statuts / diffusions
     if (from === "status@broadcast" || to === "status@broadcast") {
       console.log("[Filtre] Message de statut/broadcast ignoré.");
       return;
     }
 
-    // 2) Ignorer les notes perso / toi vers toi
     if (from === MON_NUMERO && to === MON_NUMERO) {
       console.log("[Filtre] Message perso (toi->toi) ignoré.");
       return;
     }
 
-    // 3) Ignorer les groupes
     if (chat.isGroup) {
       console.log("[Filtre] Message de groupe ignoré.");
       return;
@@ -373,13 +394,11 @@ client.on("message", async msg => {
     const texte = (msg.body || "").trim();
     if (!texte) return;
 
-    // 4) Filtre pro/perso
     if (!isProfessionalMessage(texte)) {
       console.log("[Filtre] Message jugé personnel, ignoré.");
       return;
     }
 
-    // 5) Recherche mémoire locale
     const { memory } = loadState();
     if (!memory || memory.length === 0) {
       console.log("[IA] Mémoire vide, aucune réponse.");
@@ -396,21 +415,49 @@ client.on("message", async msg => {
 
     const context = best.doc.text;
 
-    // 6) Contexte web
     const webContexts = [];
     webContexts.push(await fetchSiteText("https://manovende.com"));
     webContexts.push(await fetchSiteText("https://social.manovende.com"));
 
-    // 7) Appel IA
-    const answer = await callPerplexity(texte, context, webContexts);
+    // Résumé des échanges précédents pour le contexte
+    const convSummary = await getConversationSummary(msg, 6);
+
+    // Si on ne connaît pas encore le nom du contact, on commence par le demander
+    const contact = await msg.getContact();
+    const hasName =
+      (contact.pushname && contact.pushname.trim().length > 0) ||
+      (contact.name && contact.name.trim().length > 0);
+
+    if (!hasName) {
+      await msg.reply(
+        "Bonsoir 😊, je suis Idal de Mano Verde.\n" +
+        "Pour mieux vous accompagner, comment dois-je vous appeler ?"
+      );
+      console.log("[IA] Demande du nom envoyée, pas de réponse IA principale.");
+      return;
+    }
+
+    const answer = await callPerplexity(texte, context, webContexts, convSummary);
 
     if (!answer) {
       console.log("[IA] Pas de réponse IA (garde-fou), silence.");
       return;
     }
 
+    const displayName = contact.pushname || contact.name || "";
+    const politeIntro = displayName
+      ? `Bonsoir ${displayName} 😊,\n`
+      : "Bonsoir 😊,\n";
+
+    const finalReply =
+      politeIntro +
+      "merci pour votre message, je vais vous répondre en tenant compte de vos échanges précédents.\n\n" +
+      answer +
+      "\n\nPour parler directement avec nous : +237 696 87 58 95, " +
+      "direction@manovende.com ou infos@manovende.com.";
+
     console.log("[IA] Réponse envoyée au client.");
-    await msg.reply(answer);
+    await msg.reply(finalReply);
   } catch (e) {
     console.error("[Bot] Erreur handler message:", e.message);
     return;
