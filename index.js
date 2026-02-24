@@ -176,10 +176,10 @@ async function fetchSiteText(url) {
     const res = await axios.get(url, { timeout: 10000 });
     const html = res.data || "";
     const text = String(html)
-      .replace(/<script[\\s\\S]*?<\\/script>/gi, " ")
-      .replace(/<style[\\s\\S]*?<\\/style>/gi, " ")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
-      .replace(/\\s+/g, " ")
+      .replace(/\s+/g, " ")
       .trim();
     return text.slice(0, 20000);
   } catch (e) {
@@ -197,7 +197,7 @@ async function getConversationSummary(msg, maxMessages = 5) {
     const parts = messages
       .sort((a, b) => a.timestamp - b.timestamp)
       .map(m => `${m.fromMe ? "Moi" : "Client"}: ${m.body}`)
-      .join("\\n");
+      .join("\n");
     return parts;
   } catch (e) {
     console.error("[Chat] Impossible de récupérer l'historique:", e.message);
@@ -215,23 +215,23 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       return null;
     }
 
-    const webText = webContexts.filter(Boolean).join("\\n\\n---\\n\\n").slice(0, 20000);
+    const webText = webContexts.filter(Boolean).join("\n\n---\n\n").slice(0, 20000);
 
     const prompt =
       "Tu es un assistant commercial Mano Verde / Manovende. " +
-      "Tu dois répondre uniquement à partir des informations suivantes et rester dans le contexte des produits et services de l'entreprise.\\n\\n" +
+      "Tu dois répondre uniquement à partir des informations suivantes et rester dans le contexte des produits et services de l'entreprise.\n\n" +
       "INTERDICTION ABSOLUE : ne parle jamais de foyers de cuisson, de biomasse, de pyrolyse, ni d'utilisation pratique d'un foyer. " +
-      "Si ces sujets sont évoqués dans les sources, tu dois les ignorer complètement.\\n\\n" +
-      "=== CONTEXTE DOCUMENTS INTERNES ===\\n" + (context || "") + "\\n\\n" +
-      "=== CONTEXTE SITES WEB ===\\n" + webText + "\\n\\n" +
-      "=== CONTEXTE CONVERSATION ===\\n" + (convSummary || "") + "\\n\\n" +
-      "Règles importantes :\\n" +
-      "- Tu te limites à Mano Verde / Manovende et Terrasocial.\\n" +
-      "- Pour Terrasocial, rappelle que les terrains et les offres sont détaillés sur https://social.manovende.com.\\n" +
-      "- Pour tout besoin de contact, tu donnes uniquement : téléphone +237 696 87 58 95, emails direction@manovende.com et infos@manovende.com.\\n" +
-      "- Tu écris de façon chaleureuse, brève et claire, comme un humain poli.\\n" +
-      "- Si la question n'a aucun rapport avec ces contextes, tu expliques gentiment que ce n'est pas ton domaine.\\n\\n" +
-      "Question du client :\\n" + question;
+      "Si ces sujets sont évoqués dans les sources, tu dois les ignorer complètement.\n\n" +
+      "=== CONTEXTE DOCUMENTS INTERNES ===\n" + (context || "") + "\n\n" +
+      "=== CONTEXTE SITES WEB ===\n" + webText + "\n\n" +
+      "=== CONTEXTE CONVERSATION ===\n" + (convSummary || "") + "\n\n" +
+      "Règles importantes :\n" +
+      "- Tu te limites à Mano Verde / Manovende et Terrasocial.\n" +
+      "- Pour Terrasocial, rappelle que les terrains et les offres sont détaillés sur https://social.manovende.com.\n" +
+      "- Pour tout besoin de contact, tu donnes uniquement : téléphone +237 696 87 58 95, emails direction@manovende.com et infos@manovende.com.\n" +
+      "- Tu écris de façon chaleureuse, brève et claire, comme un humain poli.\n" +
+      "- Si la question n'a aucun rapport avec ces contextes, tu expliques gentiment que ce n'est pas ton domaine.\n\n" +
+      "Question du client :\n" + question;
 
     const body = {
       model: "sonar",
@@ -275,12 +275,12 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       return null;
     }
 
-    // Nettoyage agressif de tout ce qui parle de foyer / biomasse
+    // Nettoyage agressif de tout ce qui parle de foyer / biomasse (niveau IA)
     const forbiddenPatterns = [
-      /en pratique, vous l'utilisez comme un foyer de cuisson[^.\\n]*/gi,
-      /foyer de cuisson[^.\\n]*/gi,
-      /biomasse[^.\\n]*/gi,
-      /pyrolys[ea][^.\\n]*/gi
+      /en pratique, vous l'utilisez comme un foyer de cuisson[^.\n]*/gi,
+      /foyer de cuisson[^.\n]*/gi,
+      /biomasse[^.\n]*/gi,
+      /pyrolys[ea][^.\n]*/gi
     ];
     for (const pat of forbiddenPatterns) {
       reply = reply.replace(pat, "");
@@ -293,13 +293,13 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       reply = reply.slice(0, cutIndex).trim();
     }
 
-    // normaliser les contacts
-    reply = reply.replace(/(\\+?237)?\\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
-    reply = reply.replace(/direction@[a-z0-9.\\-]+/gi, "direction@manovende.com");
-    reply = reply.replace(/infos?@[a-z0-9.\\-]+/gi, "infos@manovende.com");
-    reply = reply.replace(/https?:\\/\\/[^\\s]+/gi, "https://social.manovende.com");
+    // normaliser les contacts et liens
+    reply = reply.replace(/(\+?237)?\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
+    reply = reply.replace(/direction@[a-z0-9.\-]+/gi, "direction@manovende.com");
+    reply = reply.replace(/infos?@[a-z0-9.\-]+/gi, "infos@manovende.com");
+    reply = reply.replace(/https?:\/\/[^\s]+/gi, "https://social.manovende.com");
 
-    reply = reply.replace(/\\n\\s*\\n\\s*\\n+/g, "\\n\\n");
+    reply = reply.replace(/\n\s*\n\s*\n+/g, "\n\n");
 
     if (reply.length > 700) reply = reply.slice(0, 700) + " [...]";
 
@@ -395,28 +395,40 @@ client.on("message", async msg => {
 
     if (!hasName) {
       await msg.reply(
-        "Bonsoir 😊, je suis Idal de Mano Verde.\\n" +
+        "Bonsoir 😊, je suis Idal de Mano Verde.\n" +
         "Pour mieux vous accompagner, comment dois-je vous appeler ?"
       );
       console.log("[IA] Demande du nom envoyée, pas de réponse IA principale.");
       return;
     }
 
-    const answer = await callPerplexity(texte, context, webContexts, convSummary);
+    let answer = await callPerplexity(texte, context, webContexts, convSummary);
     if (!answer) {
       console.log("[IA] Pas de réponse IA (garde-fou), silence.");
       return;
     }
 
+    // Filet de sécurité final : on enlève encore la phrase exacte si elle traîne
+    const forbiddenSentence =
+      "En pratique, vous l'utilisez comme un foyer de cuisson classique : vous allumez le feu avec un petit allume-feu, ajoutez progressivement la biomasse bien sèche et réglez l'arrivée d'air pour obtenir une flamme stable et propre.";
+    answer = answer.replace(forbiddenSentence, "");
+    const idxF = answer.toLowerCase().indexOf("foyer de cuisson");
+    const idxB = answer.toLowerCase().indexOf("biomasse");
+    const cutIdxCandidates = [idxF, idxB].filter(i => i >= 0);
+    if (cutIdxCandidates.length > 0) {
+      const cutAt = Math.min(...cutIdxCandidates);
+      answer = answer.slice(0, cutAt).trim();
+    }
+
     const displayName = contact.pushname || contact.name || "";
     const politeIntro = !alreadyGreetedToday
       ? (displayName
-          ? `Bonsoir ${displayName} 😊, je suis Idal de Mano Verde.\\n`
-          : "Bonsoir 😊, je suis Idal de Mano Verde.\\n")
-      : (displayName ? `Merci ${displayName} pour votre message.\\n` : "Merci pour votre message.\\n");
+          ? `Bonsoir ${displayName} 😊, je suis Idal de Mano Verde.\n`
+          : "Bonsoir 😊, je suis Idal de Mano Verde.\n")
+      : (displayName ? `Merci ${displayName} pour votre message.\n` : "Merci pour votre message.\n");
 
     const sentences = answer
-      .split(/(?<=[.!?])\\s+/)
+      .split(/(?<=[.!?])\s+/)
       .map(s => s.trim())
       .filter(Boolean);
 
@@ -438,7 +450,7 @@ client.on("message", async msg => {
       const firstMessage =
         politeIntro +
         chunks[0] +
-        "\\n\\nPour nous joindre directement : +237 696 87 58 95, " +
+        "\n\nPour nous joindre directement : +237 696 87 58 95, " +
         "direction@manovende.com ou infos@manovende.com.";
       await msg.reply(firstMessage);
     }
