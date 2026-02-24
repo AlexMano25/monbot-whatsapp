@@ -14,6 +14,18 @@ const STORAGE_FILE = "./brain_memory.json";
 const STATE_FILE = "./scan_state.json";
 const MON_NUMERO = "237696875895@c.us";
 
+const SCAN_INTERVAL_MS = 60 * 1000;          // Rescan documents toutes les 60s
+const WEB_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // Refresh web toutes les 4h
+
+// ======================= CACHE GLOBAL EN MÉMOIRE =======================
+
+let globalMemory = [];  // mémoire documents — mise à jour automatique
+
+let webCache = {
+  texts: [],
+  lastFetch: 0
+};
+
 // ======================= INDEX LOCAL =======================
 
 function fileListFromDirs() {
@@ -44,8 +56,8 @@ function fileListFromDirs() {
 }
 
 async function readFileText(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
   try {
+    const ext = path.extname(filePath).toLowerCase();
     if (ext === ".pdf") return "";
     return fs.readFileSync(filePath, "utf-8");
   } catch (e) {
@@ -58,18 +70,12 @@ function loadState() {
   let memory = [];
   let scan = {};
   if (fs.existsSync(STORAGE_FILE)) {
-    try {
-      memory = JSON.parse(fs.readFileSync(STORAGE_FILE, "utf-8"));
-    } catch {
-      console.log("[IA] Impossible de lire brain_memory.json, on repart vide.");
-    }
+    try { memory = JSON.parse(fs.readFileSync(STORAGE_FILE, "utf-8")); }
+    catch { console.log("[IA] Impossible de lire brain_memory.json, on repart vide."); }
   }
   if (fs.existsSync(STATE_FILE)) {
-    try {
-      scan = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
-    } catch {
-      console.log("[Scan] Impossible de lire scan_state.json, on repart de zéro.");
-    }
+    try { scan = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8")); }
+    catch { console.log("[Scan] Impossible de lire scan_state.json, on repart de zéro."); }
   }
   return { memory, scan };
 }
@@ -83,8 +89,7 @@ function embedText(text) {
   const bytes = Buffer.from(text, "utf-8");
   let sum = 0;
   for (const b of bytes) sum += b;
-  const avg = sum / Math.max(bytes.length, 1);
-  return [avg];
+  return [sum / Math.max(bytes.length, 1)];
 }
 
 function cosineSim(a, b) {
@@ -106,13 +111,17 @@ function findBestMatch(memory, query, k = 1) {
   return scored.slice(0, k);
 }
 
+// ======================= SCAN AUTO DOCUMENTS =======================
+
 async function reindexIfNeeded() {
   const files = fileListFromDirs();
   const { memory, scan } = loadState();
   let changed = false;
   const newScan = {};
   const newMemory = [];
+
   console.log("[IA] Fichiers trouvés :", files.length);
+
   for (const f of files) {
     newScan[f.path] = { mtimeMs: f.mtimeMs, size: f.size };
     const prev = scan[f.path];
@@ -120,24 +129,97 @@ async function reindexIfNeeded() {
       console.log("[Indexation] Mise à jour :", path.basename(f.path));
       const txt = await readFileText(f.path);
       if (!txt) continue;
-      const emb = embedText(txt);
-      newMemory.push({ path: f.path, text: txt, embedding: emb });
+      newMemory.push({ path: f.path, text: txt, embedding: embedText(txt) });
       changed = true;
     } else {
       const old = memory.find(m => m.path === f.path);
       if (old) newMemory.push(old);
     }
   }
+
   if (changed || Object.keys(scan).length !== Object.keys(newScan).length) {
-    console.log("[IA] Indexation terminée.");
+    console.log("[IA] Changement détecté → réindexation complète.");
+    // Écrase complètement l'ancienne mémoire
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify([]));
+    fs.writeFileSync(STATE_FILE, JSON.stringify({}));
     saveState(newMemory, newScan);
-    console.log("[IA] Mémoire de travail :", newMemory.length, "documents.");
-    return newMemory;
+    globalMemory = newMemory;
+    console.log("[IA] Mémoire reconstruite :", newMemory.length, "documents.");
   } else {
-    console.log("[Scan] Pas de changement dans les documents.");
-    console.log("[IA] Mémoire de travail :", memory.length, "documents.");
-    return memory;
+    if (globalMemory.length === 0) globalMemory = memory;
+    console.log("[Scan] Aucun changement. Mémoire :", globalMemory.length, "documents.");
   }
+}
+
+// Lancement du scan automatique toutes les 60 secondes
+function startDocumentWatcher() {
+  console.log("[Watcher] Surveillance des documents activée (interval: 60s).");
+  setInterval(async () => {
+    try {
+      await reindexIfNeeded();
+    } catch (e) {
+      console.error("[Watcher] Erreur scan auto:", e.message);
+    }
+  }, SCAN_INTERVAL_MS);
+}
+
+// ======================= CACHE WEB AUTO-REFRESH =======================
+
+async function fetchSiteText(url) {
+  try {
+    const res = await axios.get(url, { timeout: 10000 });
+    const html = res.data || "";
+    let text = String(html)
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // Filtrer foyer/biomasse avant envoi à l'IA
+    text = text.replace(/en pratique[^.]*foyer de cuisson[^.]*/gi, "");
+    text = text.replace(/foyer de cuisson[^.]*/gi, "");
+    text = text.replace(/biomasse[^.]*/gi, "");
+    text = text.replace(/pyrolys[ea][^.]*/gi, "");
+
+    return text.slice(0, 20000);
+  } catch (e) {
+    console.error("[Web] Impossible de récupérer", url, e.message);
+    return "";
+  }
+}
+
+async function refreshWebCache() {
+  console.log("[Web] Rafraîchissement du cache web...");
+  try {
+    const t1 = await fetchSiteText("https://manovende.com");
+    const t2 = await fetchSiteText("https://social.manovende.com");
+    webCache.texts = [t1, t2];
+    webCache.lastFetch = Date.now();
+    console.log("[Web] Cache web mis à jour.");
+  } catch (e) {
+    console.error("[Web] Erreur refreshWebCache:", e.message);
+  }
+}
+
+async function getWebContexts() {
+  const age = Date.now() - webCache.lastFetch;
+  if (!webCache.lastFetch || age > WEB_CACHE_TTL_MS) {
+    await refreshWebCache();
+  }
+  return webCache.texts;
+}
+
+// Lancement du refresh web automatique toutes les 4h
+function startWebCacheRefresher() {
+  console.log("[WebCache] Auto-refresh web activé (interval: 4h).");
+  setInterval(async () => {
+    try {
+      await refreshWebCache();
+    } catch (e) {
+      console.error("[WebCache] Erreur refresh auto:", e.message);
+    }
+  }, WEB_CACHE_TTL_MS);
 }
 
 // ======================= FILTRE PRO / PERSO =======================
@@ -152,7 +234,7 @@ function isProfessionalMessage(text) {
     "transport", "logistique", "camion", "remorque",
     "internet", "fibre", "connexion", "ittelecom",
     "manovende", "manoverde", "mano verde", "gecotel",
-    "terrasocial", "terrain terrasocial", "mano verde"
+    "terrasocial", "terrain terrasocial", "bonjour"
   ];
   const motsPerso = [
     "salut", "ça va", "ca va", "sa va", "cc", "papa",
@@ -181,15 +263,12 @@ function convertMarkdownTableToWhatsApp(text) {
     const trimmed = line.trim();
     if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
       const cells = trimmed.split("|").slice(1, -1).map(c => c.trim());
-      // Ligne séparateur (---|---)
       if (cells.every(c => /^[-:\s]+$/.test(c))) continue;
-      // Première ligne = en-têtes
       if (!inTable) {
         headers = cells;
         inTable = true;
         continue;
       }
-      // Ligne de données → format liste WhatsApp
       const name = cells[0] || "";
       const rest = cells.slice(1).map((cell, idx) => {
         const h = (headers[idx + 1] || "").replace(/\*/g, "").trim();
@@ -197,41 +276,11 @@ function convertMarkdownTableToWhatsApp(text) {
       });
       output.push(`▪ *${name}* — ${rest.join(" | ")}`);
     } else {
-      if (inTable) {
-        inTable = false;
-        headers = [];
-        output.push("");
-      }
+      if (inTable) { inTable = false; headers = []; output.push(""); }
       output.push(line);
     }
   }
   return output.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-}
-
-// ======================= CONTEXTE WEB =======================
-
-async function fetchSiteText(url) {
-  try {
-    const res = await axios.get(url, { timeout: 10000 });
-    const html = res.data || "";
-    let text = String(html)
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    // Filtrer foyer/biomasse dans le contenu web AVANT envoi à l'IA
-    text = text.replace(/en pratique[^.]*foyer de cuisson[^.]*/gi, "");
-    text = text.replace(/foyer de cuisson[^.]*/gi, "");
-    text = text.replace(/biomasse[^.]*/gi, "");
-    text = text.replace(/pyrolys[ea][^.]*/gi, "");
-
-    return text.slice(0, 20000);
-  } catch (e) {
-    console.error("[Web] Impossible de récupérer", url, e.message);
-    return "";
-  }
 }
 
 // ======================= HISTORIQUE CONVERSATION =======================
@@ -240,11 +289,10 @@ async function getConversationSummary(msg, maxMessages = 5) {
   try {
     const chat = await msg.getChat();
     const messages = await chat.fetchMessages({ limit: maxMessages });
-    const parts = messages
+    return messages
       .sort((a, b) => a.timestamp - b.timestamp)
       .map(m => `${m.fromMe ? "Moi" : "Client"}: ${m.body}`)
       .join("\n");
-    return parts;
   } catch (e) {
     console.error("[Chat] Impossible de récupérer l'historique:", e.message);
     return "";
@@ -256,10 +304,7 @@ async function getConversationSummary(msg, maxMessages = 5) {
 async function callPerplexity(question, context, webContexts, convSummary) {
   try {
     const apiKey = process.env.PERPLEXITY_API_KEY;
-    if (!apiKey) {
-      console.error("[IA] PERPLEXITY_API_KEY manquant.");
-      return null;
-    }
+    if (!apiKey) { console.error("[IA] PERPLEXITY_API_KEY manquant."); return null; }
 
     const webText = webContexts.filter(Boolean).join("\n\n---\n\n").slice(0, 20000);
 
@@ -273,85 +318,71 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       "=== CONTEXTE CONVERSATION ===\n" + (convSummary || "") + "\n\n" +
       "Règles importantes :\n" +
       "- Tu te limites à Mano Verde / Manovende et Terrasocial.\n" +
-      "- Pour Terrasocial, rappelle que les terrains et les offres sont détaillés sur https://social.manovende.com.\n" +
-      "- Pour tout besoin de contact, tu donnes uniquement : téléphone +237 696 87 58 95, emails direction@manovende.com et infos@manovende.com.\n" +
-      "- Tu écris de façon chaleureuse, brève et claire, comme un humain poli.\n" +
-      "- Si tu présentes plusieurs offres ou lots, utilise une liste simple avec tirets ou puces, PAS un tableau Markdown.\n" +
-      "- Si la question n'a aucun rapport avec ces contextes, tu expliques gentiment que ce n'est pas ton domaine.\n\n" +
+      "- Pour Terrasocial, les terrains et offres sont sur https://social.manovende.com.\n" +
+      "- Contact uniquement : +237 696 87 58 95, direction@manovende.com, infos@manovende.com.\n" +
+      "- Tu écris de façon chaleureuse, brève et claire.\n" +
+      "- Pour plusieurs offres/lots : utilise une liste avec tirets ou puces, PAS un tableau Markdown.\n" +
+      "- Si hors contexte, explique gentiment que ce n'est pas ton domaine.\n\n" +
       "Question du client :\n" + question;
-
-    const body = {
-      model: "sonar",
-      messages: [
-        { role: "system", content: "Assistant commercial Mano Verde / Manovende. Ne jamais parler de foyers de cuisson, biomasse ou pyrolyse. Ne jamais utiliser de tableaux Markdown." },
-        { role: "user", content: prompt }
-      ]
-    };
 
     const resp = await axios.post(
       "https://api.perplexity.ai/chat/completions",
-      body,
       {
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
-        },
+        model: "sonar",
+        messages: [
+          { role: "system", content: "Assistant commercial Mano Verde. Interdit : foyers de cuisson, biomasse, pyrolyse, tableaux Markdown." },
+          { role: "user", content: prompt }
+        ]
+      },
+      {
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
         timeout: 20000
       }
     );
 
-    const completion =
-      resp.data &&
-      resp.data.choices &&
-      resp.data.choices[0] &&
-      resp.data.choices[0].message &&
-      resp.data.choices[0].message.content;
+    let reply = (
+      resp.data?.choices?.[0]?.message?.content || ""
+    ).trim();
 
-    let reply = (completion || "").trim();
-    console.log("[IA] Réponse BRUTE (500 chars):", reply.substring(0, 500));
+    console.log("[IA] Réponse BRUTE:", reply.substring(0, 400));
 
     const lower = reply.toLowerCase();
-    const isTooGeneric =
+    if (
       reply.length < 40 ||
       lower.includes("je ne sais pas") ||
       lower.includes("je n'ai pas assez d'informations") ||
-      lower.includes("je ne dispose pas des informations nécessaires") ||
-      lower.includes("je ne peux pas répondre");
-
-    if (!reply || isTooGeneric) {
-      console.log("[IA] Réponse IA jugée non pertinente, aucune réponse envoyée.");
+      lower.includes("je ne dispose pas") ||
+      lower.includes("je ne peux pas répondre")
+    ) {
+      console.log("[IA] Réponse non pertinente, silence.");
       return null;
     }
 
     // Nettoyage foyer / biomasse
-    const forbiddenPatterns = [
+    [
       /en pratique, vous l'utilisez comme un foyer de cuisson[^.\n]*/gi,
       /foyer de cuisson[^.\n]*/gi,
       /biomasse[^.\n]*/gi,
       /pyrolys[ea][^.\n]*/gi
-    ];
-    for (const pat of forbiddenPatterns) {
-      reply = reply.replace(pat, "");
-    }
-    if (/foyer/gi.test(reply) || /biomasse/gi.test(reply)) {
-      const idxF = reply.toLowerCase().indexOf("foyer");
-      const idxB = reply.toLowerCase().indexOf("biomasse");
-      const idxList = [idxF, idxB].filter(i => i >= 0);
-      const cutIndex = idxList.length ? Math.min(...idxList) : reply.length;
-      reply = reply.slice(0, cutIndex).trim();
+    ].forEach(pat => { reply = reply.replace(pat, ""); });
+
+    if (/foyer|biomasse/gi.test(reply)) {
+      const idx = Math.min(
+        ...[reply.toLowerCase().indexOf("foyer"), reply.toLowerCase().indexOf("biomasse")].filter(i => i >= 0)
+      );
+      reply = reply.slice(0, idx).trim();
     }
 
-    // Normaliser contacts et liens
+    // Normaliser contacts
     reply = reply.replace(/(\+?237)?\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
     reply = reply.replace(/direction@[a-z0-9.\-]+/gi, "direction@manovende.com");
     reply = reply.replace(/infos?@[a-z0-9.\-]+/gi, "infos@manovende.com");
     reply = reply.replace(/https?:\/\/[^\s]+/gi, "https://social.manovende.com");
-
-    reply = reply.replace(/\n\s*\n\s*\n+/g, "\n\n");
+    reply = reply.replace(/\n{3,}/g, "\n\n");
 
     if (reply.length > 700) reply = reply.slice(0, 700) + " [...]";
 
-    console.log("[IA] Réponse FILTRÉE (500 chars):", reply.substring(0, 500));
+    console.log("[IA] Réponse FILTRÉE:", reply.substring(0, 400));
     return reply.trim();
   } catch (e) {
     console.error("[Perplexity] Erreur:", e.message);
@@ -371,22 +402,23 @@ const client = new Client({
 });
 
 client.on("qr", qr => {
-  console.log("[WhatsApp] QR code reçu, scanne-le pour connecter le bot :");
+  console.log("[WhatsApp] QR code reçu :");
   qrcode.generate(qr, { small: true });
 });
 
 client.on("ready", async () => {
   console.log("[WhatsApp] Connecté avec succès.");
+  // Chargement initial
   await reindexIfNeeded();
+  await refreshWebCache();
+  // Lancement des watchers automatiques
+  startDocumentWatcher();
+  startWebCacheRefresher();
 });
 
 client.on("message", async msg => {
   try {
-    // ── FIX 1 : ignorer les messages envoyés par le bot lui-même ──
-    if (msg.fromMe) {
-      console.log("[Filtre] Message fromMe ignoré.");
-      return;
-    }
+    if (msg.fromMe) { console.log("[Filtre] fromMe ignoré."); return; }
 
     const chat = await msg.getChat();
     const from = msg.from;
@@ -394,57 +426,41 @@ client.on("message", async msg => {
 
     console.log("[MSG] Reçu:", from, "->", to, "|", msg.body);
 
-    if (from === "status@broadcast" || to === "status@broadcast") {
-      console.log("[Filtre] Message de statut/broadcast ignoré.");
-      return;
-    }
-    if (from === MON_NUMERO && to === MON_NUMERO) {
-      console.log("[Filtre] Message perso (toi->toi) ignoré.");
-      return;
-    }
-    if (chat.isGroup) {
-      console.log("[Filtre] Message de groupe ignoré.");
-      return;
-    }
+    if (from === "status@broadcast" || to === "status@broadcast") { return; }
+    if (from === MON_NUMERO && to === MON_NUMERO) { return; }
+    if (chat.isGroup) { console.log("[Filtre] Groupe ignoré."); return; }
 
     const texte = (msg.body || "").trim();
     if (!texte) return;
 
     if (!isProfessionalMessage(texte)) {
-      console.log("[Filtre] Message jugé personnel, ignoré.");
+      console.log("[Filtre] Message personnel ignoré.");
       return;
     }
 
-    const { memory } = loadState();
-    if (!memory || memory.length === 0) {
+    // Utilise la mémoire globale (mise à jour automatique)
+    if (!globalMemory || globalMemory.length === 0) {
       console.log("[IA] Mémoire vide, aucune réponse.");
       return;
     }
 
-    const bestArr = findBestMatch(memory, texte, 1);
-    const best = bestArr[0];
+    const best = findBestMatch(globalMemory, texte, 1)[0];
     if (!best || best.score < 0.1) {
-      console.log("[IA] Question hors contexte (score:", best ? best.score : "null", "), aucune réponse.");
+      console.log("[IA] Hors contexte (score:", best?.score ?? "null", "), silence.");
       return;
     }
 
-    const context = best.doc.text;
-
-    const webContexts = [];
-    webContexts.push(await fetchSiteText("https://manovende.com"));
-    webContexts.push(await fetchSiteText("https://social.manovende.com"));
-
+    // Utilise le cache web (auto-rafraîchi toutes les 4h)
+    const webContexts = await getWebContexts();
     const convSummary = await getConversationSummary(msg, 6);
-
     const contact = await msg.getContact();
+
     const hasName =
       (contact.pushname && contact.pushname.trim().length > 0) ||
       (contact.name && contact.name.trim().length > 0);
 
     const history = await chat.fetchMessages({ limit: 10 });
     const today = new Date().toDateString();
-
-    // ── FIX 2 : vérification insensible à la casse ──
     const alreadyGreetedToday = history.some(m => {
       const d = new Date(m.timestamp * 1000);
       return m.fromMe && d.toDateString() === today &&
@@ -456,49 +472,37 @@ client.on("message", async msg => {
         "Bonsoir 😊, je suis Idal de Mano Verde.\n" +
         "Pour mieux vous accompagner, comment dois-je vous appeler ?"
       );
-      console.log("[IA] Demande du nom envoyée, pas de réponse IA principale.");
       return;
     }
 
-    let answer = await callPerplexity(texte, context, webContexts, convSummary);
-    if (!answer) {
-      console.log("[IA] Pas de réponse IA (garde-fou), silence.");
-      return;
-    }
+    let answer = await callPerplexity(texte, best.doc.text, webContexts, convSummary);
+    if (!answer) { console.log("[IA] Silence (garde-fou)."); return; }
 
-    // Filet de sécurité final anti-foyer
-    const forbiddenSentence =
-      "En pratique, vous l'utilisez comme un foyer de cuisson classique : vous allumez le feu avec un petit allume-feu, ajoutez progressivement la biomasse bien sèche et réglez l'arrivée d'air pour obtenir une flamme stable et propre.";
-    answer = answer.replace(forbiddenSentence, "");
+    // Filet final anti-foyer
+    answer = answer.replace(
+      /en pratique, vous l'utilisez comme un foyer de cuisson[^.]*\./gi, ""
+    );
     const idxF = answer.toLowerCase().indexOf("foyer de cuisson");
     const idxB = answer.toLowerCase().indexOf("biomasse");
-    const cutIdxCandidates = [idxF, idxB].filter(i => i >= 0);
-    if (cutIdxCandidates.length > 0) {
-      const cutAt = Math.min(...cutIdxCandidates);
-      answer = answer.slice(0, cutAt).trim();
-    }
+    const cut = [idxF, idxB].filter(i => i >= 0);
+    if (cut.length) answer = answer.slice(0, Math.min(...cut)).trim();
 
-    // ── FIX 3 : convertir les tableaux Markdown en liste WhatsApp ──
+    // Convertir tableaux Markdown → liste WhatsApp
     answer = convertMarkdownTableToWhatsApp(answer);
 
     const displayName = contact.pushname || contact.name || "";
     const politeIntro = !alreadyGreetedToday
-      ? (displayName
-          ? `Bonsoir ${displayName} 😊, je suis Idal de Mano Verde.\n`
-          : "Bonsoir 😊, je suis Idal de Mano Verde.\n")
+      ? (displayName ? `Bonsoir ${displayName} 😊, je suis Idal de Mano Verde.\n` : "Bonsoir 😊, je suis Idal de Mano Verde.\n")
       : (displayName ? `Merci ${displayName} pour votre message.\n` : "Merci pour votre message.\n");
 
-    const sentences = answer
-      .split(/(?<=[.!?])\s+/)
-      .map(s => s.trim())
-      .filter(Boolean);
-
+    // Découper en chunks
+    const sentences = answer.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
     const chunks = [];
     let current = "";
     for (const s of sentences) {
       const future = current ? current + " " + s : s;
-      const sentenceCount = (future.match(/[.!?]/g) || []).length;
-      if (sentenceCount > 4 || future.length > 350) {
+      const count = (future.match(/[.!?]/g) || []).length;
+      if (count > 4 || future.length > 350) {
         if (current) chunks.push(current);
         current = s;
       } else {
@@ -508,22 +512,16 @@ client.on("message", async msg => {
     if (current) chunks.push(current);
 
     if (chunks.length > 0) {
-      const firstMessage =
-        politeIntro +
-        chunks[0] +
-        "\n\nPour nous joindre directement : +237 696 87 58 95, " +
-        "direction@manovende.com ou infos@manovende.com.";
-      await msg.reply(firstMessage);
+      await msg.reply(
+        politeIntro + chunks[0] +
+        "\n\nPour nous joindre : +237 696 87 58 95, direction@manovende.com ou infos@manovende.com."
+      );
     }
+    for (let i = 1; i < chunks.length; i++) await msg.reply(chunks[i]);
 
-    for (let i = 1; i < chunks.length; i++) {
-      await msg.reply(chunks[i]);
-    }
-
-    console.log("[IA] Réponse envoyée au client en", chunks.length, "message(s).");
+    console.log("[IA] Réponse envoyée en", chunks.length, "message(s).");
   } catch (e) {
-    console.error("[Bot] Erreur handler message:", e.message);
-    return;
+    console.error("[Bot] Erreur:", e.message);
   }
 });
 
