@@ -177,18 +177,17 @@ function isProfessionalMessage(text) {
     "devis", "facture", "bon de commande", "commande", "souscrire", "payer", "acheter",
     "client", "contrat", "offre", "partenariat", "produit",
     "livraison", "paiement", "projet", "restaurant", "terrain",
-    "bar", "laverie", "retail", "hotel", "informations",
+    "bar", "laverie", "retail", "paie", "informations", "combien",
     "transport", "logistique", "camion", "remorque",
     "internet", "fibre", "connexion", "ittelecom",
     "manovende", "manoverde", "mano verde", "gecotel",
-    "foyer", "biomasse", "cuisson", "energie", "énergie",
-    "terrasocial", "terrain terrasocial"
+    "terrasocial", "terrain terrasocial", "mano verde"
   ];
 
   const motsPerso = [
-    "salut", "ça va", "ca va", "sa va", "cc",
-    "bonjour mon frère", "mon frere", "ma soeur",
-    "bonne année", "joyeux anniversaire",
+    "salut", "ça va", "ca va", "sa va", "cc", "papa",
+    "bonjour mon frère", "mon frere", "ma soeur", "le père",
+    "bonne année", "joyeux anniversaire", "frère", "Alex", "Jonadab",
     "lol", "mdr", "😊", "😂", "❤️",
     "comment tu vas", "ma famille", "mon fils", "ma fille"
   ];
@@ -228,7 +227,6 @@ async function fetchSiteText(url) {
 // UTILITAIRES CONVERSATION
 // =======================
 
-// Récupère quelques messages précédents pour le contexte
 async function getConversationSummary(msg, maxMessages = 5) {
   try {
     const chat = await msg.getChat();
@@ -266,12 +264,11 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       "=== CONTEXTE SITES WEB ===\n" + webText + "\n\n" +
       "=== CONTEXTE CONVERSATION ===\n" + (convSummary || "") + "\n\n" +
       "Règles importantes :\n" +
-      "- Tu utilises toujours le terme « foyer de cuisson amélioré à biomasse » pour parler du produit, jamais « four à pyrolyse ».\n" +
-      "- Tu n'expliques pas la chimie de la pyrolyse, mais la manière d'utiliser le foyer au quotidien (allumage, ajout de biomasse, réglage de l'air, sécurité, confort).\n" +
+      "- Tu ne dois plus parler des anciens projets de foyer de cuisson, ni mentionner de foyers, biomasse ou pyrolyse.\n" +
       "- Pour Terrasocial, rappelle que les terrains et les offres sont détaillés sur https://social.manovende.com.\n" +
       "- Pour tout besoin de contact, tu donnes uniquement : téléphone +237 696 87 58 95, emails direction@manovende.com et infos@manovende.com.\n" +
       "- Tu écris de façon chaleureuse, comme un humain poli, en gardant les réponses brèves et claires.\n" +
-      "- Si la question n'a aucun rapport avec ces contextes, tu réponds explicitement que tu ne peux pas répondre.\n\n" +
+      "- Si la question n'a aucun rapport avec ces contextes, tu réponds simplement que ce n'est pas dans ton domaine.\n\n" +
       "Question du client :\n" + question;
 
     const body = {
@@ -316,11 +313,10 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       return null;
     }
 
-    // Vocabulaire produit
-    reply = reply.replace(/four(s)? (à|a) pyrolyse/gi, "foyer de cuisson amélioré à biomasse");
-    reply = reply.replace(/pyrolyse/gi, "processus de combustion optimisé");
-    reply = reply.replace(/foyer amélioré/gi, "foyer de cuisson amélioré à biomasse");
-    reply = reply.replace(/four (ecologique|écolo|écologique)/gi, "foyer de cuisson amélioré à biomasse");
+    // Supprimer toute allusion résiduelle au foyer / biomasse
+    reply = reply.replace(/foyer[^.\n]*/gi, "");
+    reply = reply.replace(/biomasse[^.\n]*/gi, "");
+    reply = reply.replace(/pyrolys[ea][^.\n]*/gi, "");
 
     // Normaliser les contacts
     reply = reply.replace(/(\+?237)?\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
@@ -330,12 +326,11 @@ async function callPerplexity(question, context, webContexts, convSummary) {
     // URL terrains
     reply = reply.replace(/https?:\/\/[^\s]+/gi, "https://social.manovende.com");
 
-    // Limiter la longueur
     if (reply.length > 700) {
       reply = reply.slice(0, 700) + " [...]";
     }
 
-    return reply;
+    return reply.trim();
   } catch (e) {
     console.error("[Perplexity] Erreur:", e.message);
     return null;
@@ -419,10 +414,8 @@ client.on("message", async msg => {
     webContexts.push(await fetchSiteText("https://manovende.com"));
     webContexts.push(await fetchSiteText("https://social.manovende.com"));
 
-    // Résumé des échanges précédents pour le contexte
     const convSummary = await getConversationSummary(msg, 6);
 
-    // Si on ne connaît pas encore le nom du contact, on commence par le demander
     const contact = await msg.getContact();
     const hasName =
       (contact.pushname && contact.pushname.trim().length > 0) ||
@@ -453,7 +446,7 @@ client.on("message", async msg => {
       politeIntro +
       "merci pour votre message, je vais vous répondre en tenant compte de vos échanges précédents.\n\n" +
       answer +
-      "\n\nPour parler directement avec nous : +237 696 87 58 95, " +
+      "\n\nPour nous joindre directement : +237 696 87 58 95, " +
       "direction@manovende.com ou infos@manovende.com.";
 
     console.log("[IA] Réponse envoyée au client.");
