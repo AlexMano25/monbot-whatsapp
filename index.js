@@ -261,6 +261,7 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       resp.data.choices[0].message.content;
 
     let reply = (completion || "").trim();
+    console.log("[IA] Réponse BRUTE (500 chars):", reply.substring(0, 500));
 
     const lower = reply.toLowerCase();
     const isTooGeneric =
@@ -302,7 +303,7 @@ async function callPerplexity(question, context, webContexts, convSummary) {
     reply = reply.replace(/\n\s*\n\s*\n+/g, "\n\n");
 
     if (reply.length > 700) reply = reply.slice(0, 700) + " [...]";
-
+    console.log("[IA] Réponse FILTRÉE (500 chars):", reply.substring(0, 500));
     return reply.trim();
   } catch (e) {
     console.error("[Perplexity] Erreur:", e.message);
