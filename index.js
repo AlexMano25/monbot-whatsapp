@@ -11,7 +11,6 @@ const axios = require("axios");
 // CONFIG GLOBALE
 // =======================
 
-// Dossiers sources sur le VPS (à adapter si besoin)
 const SOURCE_DIRECTORIES = [
   "/opt/monbot/documents"
 ];
@@ -19,16 +18,6 @@ const SOURCE_DIRECTORIES = [
 const STORAGE_FILE = "./brain_memory.json"; // embeddings + textes
 const STATE_FILE = "./scan_state.json";     // état fichiers (mtime, size)
 const MON_NUMERO = "237696875895@c.us";
-
-// Formulaires PDF publics (chemins VPS)
-const FORMULAIRES = {
-  souscription_transport:
-    "/opt/monbot/documents/Formulaire_Publique/formulaire_souscription_transport.pdf",
-  souscription_restaurant:
-    "/opt/monbot/documents/Formulaire_Publique/formulaire_souscription_restaurant.pdf",
-  prospectus_mano_verde:
-    "/opt/monbot/documents/Formulaire_Publique/prospectus_mano_verde.pdf"
-};
 
 // =======================
 // VECTEUR / INDEX LOCAL
@@ -51,7 +40,6 @@ function fileListFromDirs() {
           walk(full);
         } else {
           const ext = path.extname(entry).toLowerCase();
-          // IMPORTANT: plus de PDF côté serveur
           if ([".txt", ".md"].includes(ext)) {
             results.push({ path: full, mtimeMs: st.mtimeMs, size: st.size });
           }
@@ -70,7 +58,6 @@ async function readFileText(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   try {
     if (ext === ".pdf") {
-      // Sur le serveur on ignore les PDF pour éviter pdf-parse
       return "";
     } else {
       return fs.readFileSync(filePath, "utf-8");
@@ -140,21 +127,22 @@ function findBestMatch(memory, query, k = 1) {
   return scored.slice(0, k);
 }
 
-// rescans fichiers et met à jour memory si besoin
 async function reindexIfNeeded() {
   const files = fileListFromDirs();
   const { memory, scan } = loadState();
 
-  let changed = false;
   const newScan = {};
   const newMemory = [];
+  let changed = false;
+
+  console.log("[IA] Fichiers trouvés :", files.length);
 
   for (const f of files) {
     newScan[f.path] = { mtimeMs: f.mtimeMs, size: f.size };
     const prev = scan[f.path];
 
     if (!prev || prev.mtimeMs !== f.mtimeMs || prev.size !== f.size) {
-      console.log("[Scan] (Re)lecture", f.path);
+      console.log("[Indexation] Mise à jour :", path.basename(f.path));
       const txt = await readFileText(f.path);
       if (!txt) continue;
       const emb = embedText(txt);
@@ -167,11 +155,13 @@ async function reindexIfNeeded() {
   }
 
   if (changed || Object.keys(scan).length !== Object.keys(newScan).length) {
-    console.log("[Scan] Changements détectés, sauvegarde de l'état.");
+    console.log("[IA] Indexation terminée.");
     saveState(newMemory, newScan);
+    console.log("[IA] Mémoire de travail :", newMemory.length, "documents.");
     return newMemory;
   } else {
     console.log("[Scan] Pas de changement dans les documents.");
+    console.log("[IA] Mémoire de travail :", memory.length, "documents.");
     return memory;
   }
 }
@@ -191,7 +181,8 @@ function isProfessionalMessage(text) {
     "transport", "logistique", "camion", "remorque",
     "internet", "fibre", "connexion", "ittelecom",
     "manovende", "manoverde", "mano verde", "gecotel",
-    "foyer", "biomasse", "cuisson", "energie", "énergie"
+    "foyer", "biomasse", "cuisson", "energie", "énergie",
+    "terrasocial", "terrain terrasocial"
   ];
 
   const motsPerso = [
@@ -226,7 +217,7 @@ async function fetchSiteText(url) {
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-    return text.slice(0, 20000); // limite simple
+    return text.slice(0, 20000);
   } catch (e) {
     console.error("[Web] Impossible de récupérer", url, e.message);
     return "";
@@ -258,7 +249,7 @@ async function callPerplexity(question, context, webContexts) {
       "jamais « four à pyrolyse ».\n" +
       "- Tu n'expliques pas la chimie de la pyrolyse, mais la manière d'utiliser le foyer au quotidien " +
       "(allumage, ajout de biomasse, réglage de l'air, sécurité, confort).\n" +
-      "- Si la question n'a aucun rapport avec ces contextes, tu réponds explicitement que tu ne peux pas répondre.\n\n" +
+      "- Si la question n'a aucun rapport avec ces contextes, dis-le simplement.\n\n" +
       "Question du client :\n" + question;
 
     const body = {
@@ -290,7 +281,6 @@ async function callPerplexity(question, context, webContexts) {
 
     let reply = (completion || "").trim();
 
-    // Garde-fou: réponse vide ou trop générique => on se tait
     const lower = reply.toLowerCase();
     const isTooGeneric =
       reply.length < 40 ||
@@ -304,21 +294,26 @@ async function callPerplexity(question, context, webContexts) {
       return null;
     }
 
-    // Post-traitement vocabulaire produit
+    // Vocabulaire produit
     reply = reply.replace(/four(s)? (à|a) pyrolyse/gi, "foyer de cuisson amélioré à biomasse");
     reply = reply.replace(/pyrolyse/gi, "processus de combustion optimisé");
     reply = reply.replace(/foyer amélioré/gi, "foyer de cuisson amélioré à biomasse");
     reply = reply.replace(/four (ecologique|écolo|écologique)/gi, "foyer de cuisson amélioré à biomasse");
 
-    // Ajout d'un paragraphe pratique (sans dévoiler de secrets industriels)
-    reply += "\n\nEn pratique, vous l'utilisez comme un foyer de cuisson classique : " +
-      "vous allumez le feu avec un petit allume-feu, ajoutez progressivement la biomasse bien sèche " +
-      "et réglez l'arrivée d'air pour obtenir une flamme stable et propre.";
+    // Limiter la longueur
+    if (reply.length > 900) {
+      reply = reply.slice(0, 900) + " [...]";
+    }
+
+    const intro =
+      "Bonjour, je suis l'assistant de Mano Verde / Manovende.\n" +
+      "Pouvez-vous préciser en quelques mots votre besoin (terrain Terrasocial, foyer de cuisson amélioré à biomasse, internet, autre) ?\n\n";
+
+    reply = intro + reply;
 
     return reply;
   } catch (e) {
-    console.error("[IA] Erreur Perplexity:", e.message);
-    // Silence en cas d'erreur IA
+    console.error("[Perplexity] Erreur:", e.message);
     return null;
   }
 }
@@ -355,24 +350,36 @@ client.on("message", async msg => {
     const from = msg.from;
     const to = msg.to;
 
-    // 1) Bloquer TOUT ce qui implique ton propre numéro (statut, notes, etc.)
-    if (from === MON_NUMERO || to === MON_NUMERO) {
+    console.log("[MSG] Reçu:", from, "->", to, "|", msg.body);
+
+    // 1) Ignorer tous les statuts / diffusions
+    if (from === "status@broadcast" || to === "status@broadcast") {
+      console.log("[Filtre] Message de statut/broadcast ignoré.");
       return;
     }
 
-    // 2) Ignorer les groupes
-    if (chat.isGroup) return;
+    // 2) Ignorer les notes perso / toi vers toi
+    if (from === MON_NUMERO && to === MON_NUMERO) {
+      console.log("[Filtre] Message perso (toi->toi) ignoré.");
+      return;
+    }
+
+    // 3) Ignorer les groupes
+    if (chat.isGroup) {
+      console.log("[Filtre] Message de groupe ignoré.");
+      return;
+    }
 
     const texte = (msg.body || "").trim();
     if (!texte) return;
 
-    // 3) Filtre pro/perso
+    // 4) Filtre pro/perso
     if (!isProfessionalMessage(texte)) {
-      console.log("[Filtre] Message jugé personnel, aucune réponse.");
+      console.log("[Filtre] Message jugé personnel, ignoré.");
       return;
     }
 
-    // 4) Recherche dans la mémoire locale
+    // 5) Recherche mémoire locale
     const { memory } = loadState();
     if (!memory || memory.length === 0) {
       console.log("[IA] Mémoire vide, aucune réponse.");
@@ -382,31 +389,30 @@ client.on("message", async msg => {
     const bestArr = findBestMatch(memory, texte, 1);
     const best = bestArr[0];
 
-    // Seuil de similarité minimal : silence si hors contexte
-    if (!best || best.score < 0.2) {
+    if (!best || best.score < 0.1) {
       console.log("[IA] Question hors contexte (score:", best ? best.score : "null", "), aucune réponse.");
       return;
     }
 
     const context = best.doc.text;
 
-    // 5) Contexte web ManoVende
+    // 6) Contexte web
     const webContexts = [];
     webContexts.push(await fetchSiteText("https://manovende.com"));
     webContexts.push(await fetchSiteText("https://social.manovende.com"));
 
-    // 6) Appel IA avec garde-fou
+    // 7) Appel IA
     const answer = await callPerplexity(texte, context, webContexts);
 
     if (!answer) {
-      // IA pas sûre / erreur / hors contexte -> silence
+      console.log("[IA] Pas de réponse IA (garde-fou), silence.");
       return;
     }
 
+    console.log("[IA] Réponse envoyée au client.");
     await msg.reply(answer);
   } catch (e) {
     console.error("[Bot] Erreur handler message:", e.message);
-    // Silence côté client
     return;
   }
 });
