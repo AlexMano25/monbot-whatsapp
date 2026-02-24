@@ -392,6 +392,29 @@ client.on("message", async msg => {
       const d = new Date(m.timestamp * 1000);
       return m.fromMe && d.toDateString() === today && m.body.includes("Je suis Idal de Mano Verde");
     });
+async function fetchSiteText(url) {
+  try {
+    const res = await axios.get(url, { timeout: 10000 });
+    const html = res.data || "";
+    let text = String(html)
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // Supprimer la phrase foyer/biomasse dans le contenu web AVANT d'envoyer à l'IA
+    text = text.replace(/en pratique[^.]*foyer de cuisson[^.]*/gi, "");
+    text = text.replace(/foyer de cuisson[^.]*/gi, "");
+    text = text.replace(/biomasse[^.]*/gi, "");
+    text = text.replace(/pyrolys[ea][^.]*/gi, "");
+
+    return text.slice(0, 20000);
+  } catch (e) {
+    console.error("[Web] Impossible de récupérer", url, e.message);
+    return "";
+  }
+}
 
     if (!hasName) {
       await msg.reply(
