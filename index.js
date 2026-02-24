@@ -1,5 +1,4 @@
 require("dotenv").config();
-
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
@@ -7,32 +6,22 @@ const path = require("path");
 const tf = require("@tensorflow/tfjs-node");
 const axios = require("axios");
 
-// =======================
-// CONFIG GLOBALE
-// =======================
+// ======================= CONFIG GLOBALE =======================
 
-const SOURCE_DIRECTORIES = [
-  "/opt/monbot/documents"
-];
-
-const STORAGE_FILE = "./brain_memory.json"; // embeddings + textes
-const STATE_FILE = "./scan_state.json";     // état fichiers (mtime, size)
+const SOURCE_DIRECTORIES = ["/opt/monbot/documents"];
+const STORAGE_FILE = "./brain_memory.json";
+const STATE_FILE = "./scan_state.json";
 const MON_NUMERO = "237696875895@c.us";
 
-// =======================
-// VECTEUR / INDEX LOCAL
-// =======================
+// ======================= INDEX LOCAL =======================
 
 function fileListFromDirs() {
   const results = [];
-
   function walk(dir) {
     if (!fs.existsSync(dir)) return;
     const entries = fs.readdirSync(dir);
-
     for (const entry of entries) {
       if (entry.startsWith(".") || ["node_modules", "venv"].includes(entry)) continue;
-
       const full = path.join(dir, entry);
       try {
         const st = fs.statSync(full);
@@ -49,7 +38,6 @@ function fileListFromDirs() {
       }
     }
   }
-
   for (const d of SOURCE_DIRECTORIES) walk(d);
   return results;
 }
@@ -57,11 +45,8 @@ function fileListFromDirs() {
 async function readFileText(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   try {
-    if (ext === ".pdf") {
-      return "";
-    } else {
-      return fs.readFileSync(filePath, "utf-8");
-    }
+    if (ext === ".pdf") return "";
+    return fs.readFileSync(filePath, "utf-8");
   } catch (e) {
     console.error("[Parse] Erreur sur", filePath, e.message);
     return null;
@@ -71,23 +56,20 @@ async function readFileText(filePath) {
 function loadState() {
   let memory = [];
   let scan = {};
-
   if (fs.existsSync(STORAGE_FILE)) {
     try {
       memory = JSON.parse(fs.readFileSync(STORAGE_FILE, "utf-8"));
-    } catch (e) {
+    } catch {
       console.log("[IA] Impossible de lire brain_memory.json, on repart vide.");
     }
   }
-
   if (fs.existsSync(STATE_FILE)) {
     try {
       scan = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
-    } catch (e) {
+    } catch {
       console.log("[Scan] Impossible de lire scan_state.json, on repart de zéro.");
     }
   }
-
   return { memory, scan };
 }
 
@@ -96,7 +78,6 @@ function saveState(memory, scan) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(scan));
 }
 
-// Embedding simple (moyenne des codes UTF-8)
 function embedText(text) {
   const bytes = Buffer.from(text, "utf-8");
   let sum = 0;
@@ -107,7 +88,9 @@ function embedText(text) {
 
 function cosineSim(a, b) {
   if (!a || !b || a.length !== b.length) return 0;
-  let dot = 0, na = 0, nb = 0;
+  let dot = 0,
+    na = 0,
+    nb = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     na += a[i] * a[i];
@@ -119,10 +102,7 @@ function cosineSim(a, b) {
 
 function findBestMatch(memory, query, k = 1) {
   const qVec = embedText(query);
-  const scored = memory.map(m => ({
-    doc: m,
-    score: cosineSim(qVec, m.embedding)
-  }));
+  const scored = memory.map(m => ({ doc: m, score: cosineSim(qVec, m.embedding) }));
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, k);
 }
@@ -130,17 +110,13 @@ function findBestMatch(memory, query, k = 1) {
 async function reindexIfNeeded() {
   const files = fileListFromDirs();
   const { memory, scan } = loadState();
-
   let changed = false;
   const newScan = {};
   const newMemory = [];
-
   console.log("[IA] Fichiers trouvés :", files.length);
-
   for (const f of files) {
     newScan[f.path] = { mtimeMs: f.mtimeMs, size: f.size };
     const prev = scan[f.path];
-
     if (!prev || prev.mtimeMs !== f.mtimeMs || prev.size !== f.size) {
       console.log("[Indexation] Mise à jour :", path.basename(f.path));
       const txt = await readFileText(f.path);
@@ -153,7 +129,6 @@ async function reindexIfNeeded() {
       if (old) newMemory.push(old);
     }
   }
-
   if (changed || Object.keys(scan).length !== Object.keys(newScan).length) {
     console.log("[IA] Indexation terminée.");
     saveState(newMemory, newScan);
@@ -166,13 +141,10 @@ async function reindexIfNeeded() {
   }
 }
 
-// =======================
-// FILTRE PRO / PERSO
-// =======================
+// ======================= FILTRE PRO / PERSO =======================
 
 function isProfessionalMessage(text) {
   const t = text.toLowerCase();
-
   const motsPro = [
     "devis", "facture", "bon de commande", "commande", "souscrire", "payer", "acheter",
     "client", "contrat", "offre", "partenariat", "produit",
@@ -183,7 +155,6 @@ function isProfessionalMessage(text) {
     "manovende", "manoverde", "mano verde", "gecotel",
     "terrasocial", "terrain terrasocial", "mano verde"
   ];
-
   const motsPerso = [
     "salut", "ça va", "ca va", "sa va", "cc", "papa",
     "bonjour mon frère", "mon frere", "ma soeur", "le père",
@@ -191,20 +162,15 @@ function isProfessionalMessage(text) {
     "lol", "mdr", "😊", "😂", "❤️",
     "comment tu vas", "ma famille", "mon fils", "ma fille"
   ];
-
   let scorePro = 0;
   for (const m of motsPro) if (t.includes(m)) scorePro++;
-
   let scorePerso = 0;
   for (const m of motsPerso) if (t.includes(m)) scorePerso++;
-
   if (scorePerso > 0 && scorePro === 0) return false;
   return true;
 }
 
-// =======================
-// CONTEXTE WEB MANOVENDE
-// =======================
+// ======================= CONTEXTE WEB =======================
 
 async function fetchSiteText(url) {
   try {
@@ -223,9 +189,7 @@ async function fetchSiteText(url) {
   }
 }
 
-// =======================
-// UTILITAIRES CONVERSATION
-// =======================
+// ======================= UTIL CONVERSATION =======================
 
 async function getConversationSummary(msg, maxMessages = 5) {
   try {
@@ -242,9 +206,7 @@ async function getConversationSummary(msg, maxMessages = 5) {
   }
 }
 
-// =======================
-// APPEL PERPLEXITY + GARDE-FOU
-// =======================
+// ======================= APPEL PERPLEXITY =======================
 
 async function callPerplexity(question, context, webContexts, convSummary) {
   try {
@@ -258,8 +220,7 @@ async function callPerplexity(question, context, webContexts, convSummary) {
 
     const prompt =
       "Tu es un assistant commercial Mano Verde / Manovende. " +
-      "Tu dois répondre uniquement à partir des informations suivantes " +
-      "et rester dans le contexte des produits et services de l'entreprise.\n\n" +
+      "Tu dois répondre uniquement à partir des informations suivantes et rester dans le contexte des produits et services de l'entreprise.\n\n" +
       "=== CONTEXTE DOCUMENTS INTERNES ===\n" + (context || "") + "\n\n" +
       "=== CONTEXTE SITES WEB ===\n" + webText + "\n\n" +
       "=== CONTEXTE CONVERSATION ===\n" + (convSummary || "") + "\n\n" +
@@ -313,22 +274,21 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       return null;
     }
 
-    // Supprimer toute allusion résiduelle au foyer / biomasse
+    // supprimer toute allusion résiduelle au foyer / biomasse / pyrolyse
     reply = reply.replace(/foyer[^.\n]*/gi, "");
     reply = reply.replace(/biomasse[^.\n]*/gi, "");
     reply = reply.replace(/pyrolys[ea][^.\n]*/gi, "");
+    reply = reply.replace(/\n\s*\n\s*\n+/g, "\n\n");
 
-    // Normaliser les contacts
+    // normaliser les contacts
     reply = reply.replace(/(\+?237)?\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
     reply = reply.replace(/direction@[a-z0-9.\-]+/gi, "direction@manovende.com");
     reply = reply.replace(/infos?@[a-z0-9.\-]+/gi, "infos@manovende.com");
 
-    // URL terrains
+    // urls terrains
     reply = reply.replace(/https?:\/\/[^\s]+/gi, "https://social.manovende.com");
 
-    if (reply.length > 700) {
-      reply = reply.slice(0, 700) + " [...]";
-    }
+    if (reply.length > 700) reply = reply.slice(0, 700) + " [...]";
 
     return reply.trim();
   } catch (e) {
@@ -337,14 +297,10 @@ async function callPerplexity(question, context, webContexts, convSummary) {
   }
 }
 
-// =======================
-// CLIENT WHATSAPP
-// =======================
+// ======================= CLIENT WHATSAPP =======================
 
 const client = new Client({
-  authStrategy: new LocalAuth({
-    clientId: "monbot-vps"
-  }),
+  authStrategy: new LocalAuth({ clientId: "monbot-vps" }),
   puppeteer: {
     executablePath: "/root/.cache/puppeteer/chrome/linux-145.0.7632.77/chrome-linux64/chrome",
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
@@ -365,7 +321,6 @@ client.on("ready", async () => {
 client.on("message", async msg => {
   try {
     const chat = await msg.getChat();
-
     const from = msg.from;
     const to = msg.to;
 
@@ -375,12 +330,10 @@ client.on("message", async msg => {
       console.log("[Filtre] Message de statut/broadcast ignoré.");
       return;
     }
-
     if (from === MON_NUMERO && to === MON_NUMERO) {
       console.log("[Filtre] Message perso (toi->toi) ignoré.");
       return;
     }
-
     if (chat.isGroup) {
       console.log("[Filtre] Message de groupe ignoré.");
       return;
@@ -402,7 +355,6 @@ client.on("message", async msg => {
 
     const bestArr = findBestMatch(memory, texte, 1);
     const best = bestArr[0];
-
     if (!best || best.score < 0.1) {
       console.log("[IA] Question hors contexte (score:", best ? best.score : "null", "), aucune réponse.");
       return;
@@ -421,6 +373,14 @@ client.on("message", async msg => {
       (contact.pushname && contact.pushname.trim().length > 0) ||
       (contact.name && contact.name.trim().length > 0);
 
+    // présentation: seulement si pas encore fait aujourd'hui
+    const history = await chat.fetchMessages({ limit: 10 });
+    const today = new Date().toDateString();
+    const alreadyGreetedToday = history.some(m => {
+      const d = new Date(m.timestamp * 1000);
+      return m.fromMe && d.toDateString() === today && m.body.includes("Je suis Idal de Mano Verde");
+    });
+
     if (!hasName) {
       await msg.reply(
         "Bonsoir 😊, je suis Idal de Mano Verde.\n" +
@@ -431,26 +391,52 @@ client.on("message", async msg => {
     }
 
     const answer = await callPerplexity(texte, context, webContexts, convSummary);
-
     if (!answer) {
       console.log("[IA] Pas de réponse IA (garde-fou), silence.");
       return;
     }
 
     const displayName = contact.pushname || contact.name || "";
-    const politeIntro = displayName
-      ? `Bonsoir ${displayName} 😊,\n`
-      : "Bonsoir 😊,\n";
+    const politeIntro = !alreadyGreetedToday
+      ? (displayName
+          ? `Bonsoir ${displayName} 😊, je suis Idal de Mano Verde.\n`
+          : "Bonsoir 😊, je suis Idal de Mano Verde.\n")
+      : (displayName ? `Merci ${displayName} pour votre message.\n` : "Merci pour votre message.\n");
 
-    const finalReply =
-      politeIntro +
-      "merci pour votre message, je vais vous répondre en tenant compte de vos échanges précédents.\n\n" +
-      answer +
-      "\n\nPour nous joindre directement : +237 696 87 58 95, " +
-      "direction@manovende.com ou infos@manovende.com.";
+    // découper la réponse en petits messages (max 3–4 phrases)
+    const sentences = answer
+      .split(/(?<=[.!?])\s+/)
+      .map(s => s.trim())
+      .filter(Boolean);
 
-    console.log("[IA] Réponse envoyée au client.");
-    await msg.reply(finalReply);
+    const chunks = [];
+    let current = "";
+    for (const s of sentences) {
+      const future = current ? current + " " + s : s;
+      const sentenceCount = (future.match(/[.!?]/g) || []).length;
+      if (sentenceCount > 4 || future.length > 350) {
+        if (current) chunks.push(current);
+        current = s;
+      } else {
+        current = future;
+      }
+    }
+    if (current) chunks.push(current);
+
+    if (chunks.length > 0) {
+      const firstMessage =
+        politeIntro +
+        chunks[0] +
+        "\n\nPour nous joindre directement : +237 696 87 58 95, " +
+        "direction@manovende.com ou infos@manovende.com.";
+      await msg.reply(firstMessage);
+    }
+
+    for (let i = 1; i < chunks.length; i++) {
+      await msg.reply(chunks[i]);
+    }
+
+    console.log("[IA] Réponse envoyée au client en", chunks.length, "message(s).");
   } catch (e) {
     console.error("[Bot] Erreur handler message:", e.message);
     return;
