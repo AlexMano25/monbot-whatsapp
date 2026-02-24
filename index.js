@@ -169,18 +169,64 @@ function isProfessionalMessage(text) {
   return true;
 }
 
+// ======================= CONVERSION TABLEAU → WHATSAPP =======================
+
+function convertMarkdownTableToWhatsApp(text) {
+  const lines = text.split("\n");
+  const output = [];
+  let headers = [];
+  let inTable = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      const cells = trimmed.split("|").slice(1, -1).map(c => c.trim());
+      // Ligne séparateur (---|---)
+      if (cells.every(c => /^[-:\s]+$/.test(c))) continue;
+      // Première ligne = en-têtes
+      if (!inTable) {
+        headers = cells;
+        inTable = true;
+        continue;
+      }
+      // Ligne de données → format liste WhatsApp
+      const name = cells[0] || "";
+      const rest = cells.slice(1).map((cell, idx) => {
+        const h = (headers[idx + 1] || "").replace(/\*/g, "").trim();
+        return h ? `${h} : ${cell}` : cell;
+      });
+      output.push(`▪ *${name}* — ${rest.join(" | ")}`);
+    } else {
+      if (inTable) {
+        inTable = false;
+        headers = [];
+        output.push("");
+      }
+      output.push(line);
+    }
+  }
+  return output.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 // ======================= CONTEXTE WEB =======================
 
 async function fetchSiteText(url) {
   try {
     const res = await axios.get(url, { timeout: 10000 });
     const html = res.data || "";
-    const text = String(html)
+    let text = String(html)
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
       .replace(/\s+/g, " ")
       .trim();
+
+    // Filtrer foyer/biomasse dans le contenu web AVANT envoi à l'IA
+    text = text.replace(/en pratique[^.]*foyer de cuisson[^.]*/gi, "");
+    text = text.replace(/foyer de cuisson[^.]*/gi, "");
+    text = text.replace(/biomasse[^.]*/gi, "");
+    text = text.replace(/pyrolys[ea][^.]*/gi, "");
+
     return text.slice(0, 20000);
   } catch (e) {
     console.error("[Web] Impossible de récupérer", url, e.message);
@@ -230,13 +276,14 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       "- Pour Terrasocial, rappelle que les terrains et les offres sont détaillés sur https://social.manovende.com.\n" +
       "- Pour tout besoin de contact, tu donnes uniquement : téléphone +237 696 87 58 95, emails direction@manovende.com et infos@manovende.com.\n" +
       "- Tu écris de façon chaleureuse, brève et claire, comme un humain poli.\n" +
+      "- Si tu présentes plusieurs offres ou lots, utilise une liste simple avec tirets ou puces, PAS un tableau Markdown.\n" +
       "- Si la question n'a aucun rapport avec ces contextes, tu expliques gentiment que ce n'est pas ton domaine.\n\n" +
       "Question du client :\n" + question;
 
     const body = {
       model: "sonar",
       messages: [
-        { role: "system", content: "Assistant commercial Mano Verde / Manovende. Ne jamais parler de foyers de cuisson, biomasse ou pyrolyse." },
+        { role: "system", content: "Assistant commercial Mano Verde / Manovende. Ne jamais parler de foyers de cuisson, biomasse ou pyrolyse. Ne jamais utiliser de tableaux Markdown." },
         { role: "user", content: prompt }
       ]
     };
@@ -276,7 +323,7 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       return null;
     }
 
-    // Nettoyage agressif de tout ce qui parle de foyer / biomasse (niveau IA)
+    // Nettoyage foyer / biomasse
     const forbiddenPatterns = [
       /en pratique, vous l'utilisez comme un foyer de cuisson[^.\n]*/gi,
       /foyer de cuisson[^.\n]*/gi,
@@ -294,7 +341,7 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       reply = reply.slice(0, cutIndex).trim();
     }
 
-    // normaliser les contacts et liens
+    // Normaliser contacts et liens
     reply = reply.replace(/(\+?237)?\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
     reply = reply.replace(/direction@[a-z0-9.\-]+/gi, "direction@manovende.com");
     reply = reply.replace(/infos?@[a-z0-9.\-]+/gi, "infos@manovende.com");
@@ -303,6 +350,7 @@ async function callPerplexity(question, context, webContexts, convSummary) {
     reply = reply.replace(/\n\s*\n\s*\n+/g, "\n\n");
 
     if (reply.length > 700) reply = reply.slice(0, 700) + " [...]";
+
     console.log("[IA] Réponse FILTRÉE (500 chars):", reply.substring(0, 500));
     return reply.trim();
   } catch (e) {
@@ -334,6 +382,12 @@ client.on("ready", async () => {
 
 client.on("message", async msg => {
   try {
+    // ── FIX 1 : ignorer les messages envoyés par le bot lui-même ──
+    if (msg.fromMe) {
+      console.log("[Filtre] Message fromMe ignoré.");
+      return;
+    }
+
     const chat = await msg.getChat();
     const from = msg.from;
     const to = msg.to;
@@ -389,33 +443,13 @@ client.on("message", async msg => {
 
     const history = await chat.fetchMessages({ limit: 10 });
     const today = new Date().toDateString();
+
+    // ── FIX 2 : vérification insensible à la casse ──
     const alreadyGreetedToday = history.some(m => {
       const d = new Date(m.timestamp * 1000);
-      return m.fromMe && d.toDateString() === today && m.body.includes("Je suis Idal de Mano Verde");
+      return m.fromMe && d.toDateString() === today &&
+        m.body.toLowerCase().includes("je suis idal de mano verde");
     });
-async function fetchSiteText(url) {
-  try {
-    const res = await axios.get(url, { timeout: 10000 });
-    const html = res.data || "";
-    let text = String(html)
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    // Supprimer la phrase foyer/biomasse dans le contenu web AVANT d'envoyer à l'IA
-    text = text.replace(/en pratique[^.]*foyer de cuisson[^.]*/gi, "");
-    text = text.replace(/foyer de cuisson[^.]*/gi, "");
-    text = text.replace(/biomasse[^.]*/gi, "");
-    text = text.replace(/pyrolys[ea][^.]*/gi, "");
-
-    return text.slice(0, 20000);
-  } catch (e) {
-    console.error("[Web] Impossible de récupérer", url, e.message);
-    return "";
-  }
-}
 
     if (!hasName) {
       await msg.reply(
@@ -432,7 +466,7 @@ async function fetchSiteText(url) {
       return;
     }
 
-    // Filet de sécurité final : on enlève encore la phrase exacte si elle traîne
+    // Filet de sécurité final anti-foyer
     const forbiddenSentence =
       "En pratique, vous l'utilisez comme un foyer de cuisson classique : vous allumez le feu avec un petit allume-feu, ajoutez progressivement la biomasse bien sèche et réglez l'arrivée d'air pour obtenir une flamme stable et propre.";
     answer = answer.replace(forbiddenSentence, "");
@@ -443,6 +477,9 @@ async function fetchSiteText(url) {
       const cutAt = Math.min(...cutIdxCandidates);
       answer = answer.slice(0, cutAt).trim();
     }
+
+    // ── FIX 3 : convertir les tableaux Markdown en liste WhatsApp ──
+    answer = convertMarkdownTableToWhatsApp(answer);
 
     const displayName = contact.pushname || contact.name || "";
     const politeIntro = !alreadyGreetedToday
