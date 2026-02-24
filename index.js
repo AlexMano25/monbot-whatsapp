@@ -1,4 +1,5 @@
 require("dotenv").config();
+
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
@@ -88,9 +89,7 @@ function embedText(text) {
 
 function cosineSim(a, b) {
   if (!a || !b || a.length !== b.length) return 0;
-  let dot = 0,
-    na = 0,
-    nb = 0;
+  let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     na += a[i] * a[i];
@@ -177,10 +176,10 @@ async function fetchSiteText(url) {
     const res = await axios.get(url, { timeout: 10000 });
     const html = res.data || "";
     const text = String(html)
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script[\\s\\S]*?<\\/script>/gi, " ")
+      .replace(/<style[\\s\\S]*?<\\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
+      .replace(/\\s+/g, " ")
       .trim();
     return text.slice(0, 20000);
   } catch (e) {
@@ -189,7 +188,7 @@ async function fetchSiteText(url) {
   }
 }
 
-// ======================= UTIL CONVERSATION =======================
+// ======================= HISTORIQUE CONVERSATION =======================
 
 async function getConversationSummary(msg, maxMessages = 5) {
   try {
@@ -198,7 +197,7 @@ async function getConversationSummary(msg, maxMessages = 5) {
     const parts = messages
       .sort((a, b) => a.timestamp - b.timestamp)
       .map(m => `${m.fromMe ? "Moi" : "Client"}: ${m.body}`)
-      .join("\n");
+      .join("\\n");
     return parts;
   } catch (e) {
     console.error("[Chat] Impossible de récupérer l'historique:", e.message);
@@ -216,26 +215,28 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       return null;
     }
 
-    const webText = webContexts.filter(Boolean).join("\n\n---\n\n").slice(0, 20000);
+    const webText = webContexts.filter(Boolean).join("\\n\\n---\\n\\n").slice(0, 20000);
 
     const prompt =
       "Tu es un assistant commercial Mano Verde / Manovende. " +
-      "Tu dois répondre uniquement à partir des informations suivantes et rester dans le contexte des produits et services de l'entreprise.\n\n" +
-      "=== CONTEXTE DOCUMENTS INTERNES ===\n" + (context || "") + "\n\n" +
-      "=== CONTEXTE SITES WEB ===\n" + webText + "\n\n" +
-      "=== CONTEXTE CONVERSATION ===\n" + (convSummary || "") + "\n\n" +
-      "Règles importantes :\n" +
-      "- Tu ne dois plus parler des anciens projets de foyer de cuisson, ni mentionner de foyers, biomasse ou pyrolyse.\n" +
-      "- Pour Terrasocial, rappelle que les terrains et les offres sont détaillés sur https://social.manovende.com.\n" +
-      "- Pour tout besoin de contact, tu donnes uniquement : téléphone +237 696 87 58 95, emails direction@manovende.com et infos@manovende.com.\n" +
-      "- Tu écris de façon chaleureuse, comme un humain poli, en gardant les réponses brèves et claires.\n" +
-      "- Si la question n'a aucun rapport avec ces contextes, tu réponds simplement que ce n'est pas dans ton domaine.\n\n" +
-      "Question du client :\n" + question;
+      "Tu dois répondre uniquement à partir des informations suivantes et rester dans le contexte des produits et services de l'entreprise.\\n\\n" +
+      "INTERDICTION ABSOLUE : ne parle jamais de foyers de cuisson, de biomasse, de pyrolyse, ni d'utilisation pratique d'un foyer. " +
+      "Si ces sujets sont évoqués dans les sources, tu dois les ignorer complètement.\\n\\n" +
+      "=== CONTEXTE DOCUMENTS INTERNES ===\\n" + (context || "") + "\\n\\n" +
+      "=== CONTEXTE SITES WEB ===\\n" + webText + "\\n\\n" +
+      "=== CONTEXTE CONVERSATION ===\\n" + (convSummary || "") + "\\n\\n" +
+      "Règles importantes :\\n" +
+      "- Tu te limites à Mano Verde / Manovende et Terrasocial.\\n" +
+      "- Pour Terrasocial, rappelle que les terrains et les offres sont détaillés sur https://social.manovende.com.\\n" +
+      "- Pour tout besoin de contact, tu donnes uniquement : téléphone +237 696 87 58 95, emails direction@manovende.com et infos@manovende.com.\\n" +
+      "- Tu écris de façon chaleureuse, brève et claire, comme un humain poli.\\n" +
+      "- Si la question n'a aucun rapport avec ces contextes, tu expliques gentiment que ce n'est pas ton domaine.\\n\\n" +
+      "Question du client :\\n" + question;
 
     const body = {
       model: "sonar",
       messages: [
-        { role: "system", content: "Assistant commercial Mano Verde / Manovende." },
+        { role: "system", content: "Assistant commercial Mano Verde / Manovende. Ne jamais parler de foyers de cuisson, biomasse ou pyrolyse." },
         { role: "user", content: prompt }
       ]
     };
@@ -274,19 +275,31 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       return null;
     }
 
-    // supprimer toute allusion résiduelle au foyer / biomasse / pyrolyse
-    reply = reply.replace(/foyer[^.\n]*/gi, "");
-    reply = reply.replace(/biomasse[^.\n]*/gi, "");
-    reply = reply.replace(/pyrolys[ea][^.\n]*/gi, "");
-    reply = reply.replace(/\n\s*\n\s*\n+/g, "\n\n");
+    // Nettoyage agressif de tout ce qui parle de foyer / biomasse
+    const forbiddenPatterns = [
+      /en pratique, vous l'utilisez comme un foyer de cuisson[^.\\n]*/gi,
+      /foyer de cuisson[^.\\n]*/gi,
+      /biomasse[^.\\n]*/gi,
+      /pyrolys[ea][^.\\n]*/gi
+    ];
+    for (const pat of forbiddenPatterns) {
+      reply = reply.replace(pat, "");
+    }
+    if (/foyer/gi.test(reply) || /biomasse/gi.test(reply)) {
+      const idxF = reply.toLowerCase().indexOf("foyer");
+      const idxB = reply.toLowerCase().indexOf("biomasse");
+      const idxList = [idxF, idxB].filter(i => i >= 0);
+      const cutIndex = idxList.length ? Math.min(...idxList) : reply.length;
+      reply = reply.slice(0, cutIndex).trim();
+    }
 
     // normaliser les contacts
-    reply = reply.replace(/(\+?237)?\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
-    reply = reply.replace(/direction@[a-z0-9.\-]+/gi, "direction@manovende.com");
-    reply = reply.replace(/infos?@[a-z0-9.\-]+/gi, "infos@manovende.com");
+    reply = reply.replace(/(\\+?237)?\\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
+    reply = reply.replace(/direction@[a-z0-9.\\-]+/gi, "direction@manovende.com");
+    reply = reply.replace(/infos?@[a-z0-9.\\-]+/gi, "infos@manovende.com");
+    reply = reply.replace(/https?:\\/\\/[^\\s]+/gi, "https://social.manovende.com");
 
-    // urls terrains
-    reply = reply.replace(/https?:\/\/[^\s]+/gi, "https://social.manovende.com");
+    reply = reply.replace(/\\n\\s*\\n\\s*\\n+/g, "\\n\\n");
 
     if (reply.length > 700) reply = reply.slice(0, 700) + " [...]";
 
@@ -373,7 +386,6 @@ client.on("message", async msg => {
       (contact.pushname && contact.pushname.trim().length > 0) ||
       (contact.name && contact.name.trim().length > 0);
 
-    // présentation: seulement si pas encore fait aujourd'hui
     const history = await chat.fetchMessages({ limit: 10 });
     const today = new Date().toDateString();
     const alreadyGreetedToday = history.some(m => {
@@ -383,7 +395,7 @@ client.on("message", async msg => {
 
     if (!hasName) {
       await msg.reply(
-        "Bonsoir 😊, je suis Idal de Mano Verde.\n" +
+        "Bonsoir 😊, je suis Idal de Mano Verde.\\n" +
         "Pour mieux vous accompagner, comment dois-je vous appeler ?"
       );
       console.log("[IA] Demande du nom envoyée, pas de réponse IA principale.");
@@ -399,13 +411,12 @@ client.on("message", async msg => {
     const displayName = contact.pushname || contact.name || "";
     const politeIntro = !alreadyGreetedToday
       ? (displayName
-          ? `Bonsoir ${displayName} 😊, je suis Idal de Mano Verde.\n`
-          : "Bonsoir 😊, je suis Idal de Mano Verde.\n")
-      : (displayName ? `Merci ${displayName} pour votre message.\n` : "Merci pour votre message.\n");
+          ? `Bonsoir ${displayName} 😊, je suis Idal de Mano Verde.\\n`
+          : "Bonsoir 😊, je suis Idal de Mano Verde.\\n")
+      : (displayName ? `Merci ${displayName} pour votre message.\\n` : "Merci pour votre message.\\n");
 
-    // découper la réponse en petits messages (max 3–4 phrases)
     const sentences = answer
-      .split(/(?<=[.!?])\s+/)
+      .split(/(?<=[.!?])\\s+/)
       .map(s => s.trim())
       .filter(Boolean);
 
@@ -427,7 +438,7 @@ client.on("message", async msg => {
       const firstMessage =
         politeIntro +
         chunks[0] +
-        "\n\nPour nous joindre directement : +237 696 87 58 95, " +
+        "\\n\\nPour nous joindre directement : +237 696 87 58 95, " +
         "direction@manovende.com ou infos@manovende.com.";
       await msg.reply(firstMessage);
     }
