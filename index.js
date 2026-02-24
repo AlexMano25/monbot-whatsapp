@@ -12,19 +12,180 @@ const axios = require("axios");
 const SOURCE_DIRECTORIES = ["/opt/monbot/documents"];
 const STORAGE_FILE = "./brain_memory.json";
 const STATE_FILE = "./scan_state.json";
+const CRM_FILE = "./carnet_clients.json";
 const MON_NUMERO = "237696875895@c.us";
+const NUMERO_SUIVI = "237651982878@c.us";
 
-const SCAN_INTERVAL_MS = 60 * 1000;          // Rescan documents toutes les 60s
-const WEB_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // Refresh web toutes les 4h
+const SCAN_INTERVAL_MS = 60 * 1000;
+const WEB_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
+const DAILY_REPORT_HOUR = 8; // 8h du matin
 
-// ======================= CACHE GLOBAL EN MÉMOIRE =======================
+// ======================= CACHE GLOBAL =======================
 
-let globalMemory = [];  // mémoire documents — mise à jour automatique
+let globalMemory = [];
+let webCache = { texts: [], lastFetch: 0 };
+let clientWhatsApp = null; // référence globale
 
-let webCache = {
-  texts: [],
-  lastFetch: 0
-};
+// ======================= CRM : CARNET CLIENTS =======================
+
+function loadCRM() {
+  if (!fs.existsSync(CRM_FILE)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(CRM_FILE, "utf-8"));
+  } catch (e) {
+    console.error("[CRM] Erreur lecture carnet_clients.json:", e.message);
+    return {};
+  }
+}
+
+function saveCRM(carnet) {
+  try {
+    fs.writeFileSync(CRM_FILE, JSON.stringify(carnet, null, 2));
+  } catch (e) {
+    console.error("[CRM] Erreur sauvegarde:", e.message);
+  }
+}
+
+function updateClient(phoneNumber, name, interest) {
+  const carnet = loadCRM();
+  if (!carnet[phoneNumber]) {
+    carnet[phoneNumber] = {
+      nom: name || "Inconnu",
+      interets: [],
+      premiere_interaction: new Date().toISOString(),
+      derniere_interaction: new Date().toISOString(),
+      nb_messages: 0
+    };
+  }
+  const client = carnet[phoneNumber];
+  client.nom = name || client.nom;
+  client.derniere_interaction = new Date().toISOString();
+  client.nb_messages = (client.nb_messages || 0) + 1;
+
+  if (interest && !client.interets.includes(interest)) {
+    client.interets.push(interest);
+  }
+
+  saveCRM(carnet);
+  console.log(`[CRM] Client mis à jour : ${name} (${phoneNumber})`);
+}
+
+function extractInterestFromMessage(text) {
+  const t = text.toLowerCase();
+  const keywords = {
+    "Logistique & Transport": ["transport", "camion", "remorque", "logistique", "livraison"],
+    "Internet & Télécom": ["internet", "fibre", "connexion", "ittelecom", "débit"],
+    "Terrasocial (Terrains)": ["terrain", "terrasocial", "parcelle", "lotissement", "acheter terrain"],
+    "Restaurant & Bar": ["restaurant", "bar", "menu", "boisson", "manger"],
+    "Laverie": ["laverie", "laver", "pressing", "nettoyage vêtements"],
+    "Retail": ["retail", "boutique", "commerce", "vente"],
+    "Paie & RH": ["paie", "salaire", "ressources humaines", "rh", "gestion personnel"],
+    "Informations Générales": ["informations", "renseignement", "savoir plus", "détails"],
+    "Devis & Commandes": ["devis", "commande", "bon de commande", "facture", "acheter", "payer"]
+  };
+
+  for (const [category, words] of Object.entries(keywords)) {
+    for (const w of words) {
+      if (t.includes(w)) return category;
+    }
+  }
+  return "Non spécifié";
+}
+
+// ======================= RAPPORT QUOTIDIEN =======================
+
+function generateDailyReport() {
+  const carnet = loadCRM();
+  const clients = Object.entries(carnet);
+
+  if (clients.length === 0) {
+    return "📊 *Rapport Quotidien - Mano Verde CRM*\n\n🔹 Aucun client dans le carnet.\n\n_Généré le " + new Date().toLocaleDateString("fr-FR") + " à " + new Date().toLocaleTimeString("fr-FR") + "_";
+  }
+
+  let report = "📊 *RAPPORT QUOTIDIEN - MANO VERDE CRM*\n";
+  report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+  report += `📅 *Date* : ${new Date().toLocaleDateString("fr-FR")}\n`;
+  report += `👥 *Total Clients* : ${clients.length}\n\n`;
+  report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+
+  // Grouper par centres d'intérêt
+  const interestGroups = {};
+  clients.forEach(([phone, data]) => {
+    const interests = data.interets.length > 0 ? data.interets : ["Non spécifié"];
+    interests.forEach(interest => {
+      if (!interestGroups[interest]) interestGroups[interest] = [];
+      interestGroups[interest].push({ phone, ...data });
+    });
+  });
+
+  report += "🎯 *CENTRES D'INTÉRÊT*\n\n";
+  Object.entries(interestGroups).forEach(([interest, clientsList]) => {
+    report += `▫️ *${interest}* (${clientsList.length} client${clientsList.length > 1 ? "s" : ""})\n`;
+    clientsList.forEach(c => {
+      const phoneDisplay = c.phone.replace("@c.us", "").replace("237", "+237 ");
+      report += `   • ${c.nom} — ${phoneDisplay}\n`;
+      report += `     💬 ${c.nb_messages} msg | 📆 Dernière interaction : ${new Date(c.derniere_interaction).toLocaleDateString("fr-FR")}\n`;
+    });
+    report += "\n";
+  });
+
+  report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+  report += "🔔 *ACTIVITÉ RÉCENTE (24H)*\n\n";
+
+  const yesterday = Date.now() - 24 * 60 * 60 * 1000;
+  const recentClients = clients.filter(([_, data]) =>
+    new Date(data.derniere_interaction).getTime() > yesterday
+  );
+
+  if (recentClients.length === 0) {
+    report += "Aucune interaction dans les dernières 24h.\n\n";
+  } else {
+    recentClients.forEach(([phone, data]) => {
+      const phoneDisplay = phone.replace("@c.us", "").replace("237", "+237 ");
+      report += `✅ *${data.nom}* — ${phoneDisplay}\n`;
+      report += `   🎯 Intérêts : ${data.interets.join(", ") || "Non spécifié"}\n`;
+      report += `   💬 ${data.nb_messages} messages\n\n`;
+    });
+  }
+
+  report += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+  report += "_Rapport généré automatiquement par Idal - Mano Verde Bot_\n";
+  report += "🤖 Pour toute information : +237 696 87 58 95";
+
+  return report;
+}
+
+async function sendDailyReport() {
+  try {
+    if (!clientWhatsApp) {
+      console.log("[CRM] Client WhatsApp non prêt, rapport non envoyé.");
+      return;
+    }
+    const report = generateDailyReport();
+    await clientWhatsApp.sendMessage(NUMERO_SUIVI, report);
+    console.log("[CRM] ✅ Rapport quotidien envoyé à", NUMERO_SUIVI);
+  } catch (e) {
+    console.error("[CRM] ❌ Erreur envoi rapport:", e.message);
+  }
+}
+
+function scheduleDailyReport() {
+  const now = new Date();
+  const nextRun = new Date();
+  nextRun.setHours(DAILY_REPORT_HOUR, 0, 0, 0);
+
+  if (now >= nextRun) {
+    nextRun.setDate(nextRun.getDate() + 1);
+  }
+
+  const delay = nextRun.getTime() - now.getTime();
+  console.log(`[CRM] 📅 Prochain rapport quotidien prévu le ${nextRun.toLocaleString("fr-FR")}`);
+
+  setTimeout(() => {
+    sendDailyReport();
+    setInterval(sendDailyReport, 24 * 60 * 60 * 1000);
+  }, delay);
+}
 
 // ======================= INDEX LOCAL =======================
 
@@ -111,8 +272,6 @@ function findBestMatch(memory, query, k = 1) {
   return scored.slice(0, k);
 }
 
-// ======================= SCAN AUTO DOCUMENTS =======================
-
 async function reindexIfNeeded() {
   const files = fileListFromDirs();
   const { memory, scan } = loadState();
@@ -139,7 +298,6 @@ async function reindexIfNeeded() {
 
   if (changed || Object.keys(scan).length !== Object.keys(newScan).length) {
     console.log("[IA] Changement détecté → réindexation complète.");
-    // Écrase complètement l'ancienne mémoire
     fs.writeFileSync(STORAGE_FILE, JSON.stringify([]));
     fs.writeFileSync(STATE_FILE, JSON.stringify({}));
     saveState(newMemory, newScan);
@@ -151,7 +309,6 @@ async function reindexIfNeeded() {
   }
 }
 
-// Lancement du scan automatique toutes les 60 secondes
 function startDocumentWatcher() {
   console.log("[Watcher] Surveillance des documents activée (interval: 60s).");
   setInterval(async () => {
@@ -163,7 +320,7 @@ function startDocumentWatcher() {
   }, SCAN_INTERVAL_MS);
 }
 
-// ======================= CACHE WEB AUTO-REFRESH =======================
+// ======================= CACHE WEB =======================
 
 async function fetchSiteText(url) {
   try {
@@ -176,7 +333,6 @@ async function fetchSiteText(url) {
       .replace(/\s+/g, " ")
       .trim();
 
-    // Filtrer foyer/biomasse avant envoi à l'IA
     text = text.replace(/en pratique[^.]*foyer de cuisson[^.]*/gi, "");
     text = text.replace(/foyer de cuisson[^.]*/gi, "");
     text = text.replace(/biomasse[^.]*/gi, "");
@@ -210,7 +366,6 @@ async function getWebContexts() {
   return webCache.texts;
 }
 
-// Lancement du refresh web automatique toutes les 4h
 function startWebCacheRefresher() {
   console.log("[WebCache] Auto-refresh web activé (interval: 4h).");
   setInterval(async () => {
@@ -222,7 +377,7 @@ function startWebCacheRefresher() {
   }, WEB_CACHE_TTL_MS);
 }
 
-// ======================= FILTRE PRO / PERSO =======================
+// ======================= FILTRE =======================
 
 function isProfessionalMessage(text) {
   const t = text.toLowerCase();
@@ -251,7 +406,7 @@ function isProfessionalMessage(text) {
   return true;
 }
 
-// ======================= CONVERSION TABLEAU → WHATSAPP =======================
+// ======================= CONVERSION TABLEAU =======================
 
 function convertMarkdownTableToWhatsApp(text) {
   const lines = text.split("\n");
@@ -299,7 +454,7 @@ async function getConversationSummary(msg, maxMessages = 5) {
   }
 }
 
-// ======================= APPEL PERPLEXITY =======================
+// ======================= PERPLEXITY =======================
 
 async function callPerplexity(question, context, webContexts, convSummary) {
   try {
@@ -358,7 +513,6 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       return null;
     }
 
-    // Nettoyage foyer / biomasse
     [
       /en pratique, vous l'utilisez comme un foyer de cuisson[^.\n]*/gi,
       /foyer de cuisson[^.\n]*/gi,
@@ -373,7 +527,6 @@ async function callPerplexity(question, context, webContexts, convSummary) {
       reply = reply.slice(0, idx).trim();
     }
 
-    // Normaliser contacts
     reply = reply.replace(/(\+?237)?\s?6[0-9 ]{7,}/gi, "+237 696 87 58 95");
     reply = reply.replace(/direction@[a-z0-9.\-]+/gi, "direction@manovende.com");
     reply = reply.replace(/infos?@[a-z0-9.\-]+/gi, "infos@manovende.com");
@@ -407,13 +560,13 @@ client.on("qr", qr => {
 });
 
 client.on("ready", async () => {
-  console.log("[WhatsApp] Connecté avec succès.");
-  // Chargement initial
+  console.log("[WhatsApp] ✅ Connecté avec succès.");
+  clientWhatsApp = client;
   await reindexIfNeeded();
   await refreshWebCache();
-  // Lancement des watchers automatiques
   startDocumentWatcher();
   startWebCacheRefresher();
+  scheduleDailyReport();
 });
 
 client.on("message", async msg => {
@@ -438,7 +591,6 @@ client.on("message", async msg => {
       return;
     }
 
-    // Utilise la mémoire globale (mise à jour automatique)
     if (!globalMemory || globalMemory.length === 0) {
       console.log("[IA] Mémoire vide, aucune réponse.");
       return;
@@ -450,7 +602,6 @@ client.on("message", async msg => {
       return;
     }
 
-    // Utilise le cache web (auto-rafraîchi toutes les 4h)
     const webContexts = await getWebContexts();
     const convSummary = await getConversationSummary(msg, 6);
     const contact = await msg.getContact();
@@ -475,10 +626,14 @@ client.on("message", async msg => {
       return;
     }
 
+    // ✅ Mise à jour CRM
+    const clientName = contact.pushname || contact.name || "Inconnu";
+    const interest = extractInterestFromMessage(texte);
+    updateClient(from, clientName, interest);
+
     let answer = await callPerplexity(texte, best.doc.text, webContexts, convSummary);
     if (!answer) { console.log("[IA] Silence (garde-fou)."); return; }
 
-    // Filet final anti-foyer
     answer = answer.replace(
       /en pratique, vous l'utilisez comme un foyer de cuisson[^.]*\./gi, ""
     );
@@ -487,7 +642,6 @@ client.on("message", async msg => {
     const cut = [idxF, idxB].filter(i => i >= 0);
     if (cut.length) answer = answer.slice(0, Math.min(...cut)).trim();
 
-    // Convertir tableaux Markdown → liste WhatsApp
     answer = convertMarkdownTableToWhatsApp(answer);
 
     const displayName = contact.pushname || contact.name || "";
@@ -495,7 +649,6 @@ client.on("message", async msg => {
       ? (displayName ? `Bonsoir ${displayName} 😊, je suis Idal de Mano Verde.\n` : "Bonsoir 😊, je suis Idal de Mano Verde.\n")
       : (displayName ? `Merci ${displayName} pour votre message.\n` : "Merci pour votre message.\n");
 
-    // Découper en chunks
     const sentences = answer.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
     const chunks = [];
     let current = "";
