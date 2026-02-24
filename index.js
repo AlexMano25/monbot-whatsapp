@@ -7,23 +7,27 @@ const path = require("path");
 const tf = require("@tensorflow/tfjs-node");
 const axios = require("axios");
 
-// Dossier sources à indexer (documents déjà copiés ici)
+// =======================
+// CONFIG GLOBALE
+// =======================
+
+// Dossiers sources sur le VPS (à adapter si besoin)
 const SOURCE_DIRECTORIES = [
-  "/Users/all/Documents/Mano_Verde_SA/MonBot/documents"
+  "/opt/monbot/documents"
 ];
 
 const STORAGE_FILE = "./brain_memory.json"; // embeddings + textes
 const STATE_FILE = "./scan_state.json";     // état fichiers (mtime, size)
 const MON_NUMERO = "237696875895@c.us";
 
-// Formulaires PDF publics
+// Formulaires PDF publics (chemins VPS)
 const FORMULAIRES = {
   souscription_transport:
-    "/Users/all/Documents/Mano_Verde_SA/MonBot/documents/Formulaire_Publique/formulaire_souscription_transport.pdf",
+    "/opt/monbot/documents/Formulaire_Publique/formulaire_souscription_transport.pdf",
   souscription_restaurant:
-    "/Users/all/Documents/Mano_Verde_SA/MonBot/documents/Formulaire_Publique/formulaire_souscription_restaurant.pdf",
+    "/opt/monbot/documents/Formulaire_Publique/formulaire_souscription_restaurant.pdf",
   prospectus_mano_verde:
-    "/Users/all/Documents/Mano_Verde_SA/MonBot/documents/Formulaire_Publique/prospectus_mano_verde.pdf"
+    "/opt/monbot/documents/Formulaire_Publique/prospectus_mano_verde.pdf"
 };
 
 // =======================
@@ -47,6 +51,7 @@ function fileListFromDirs() {
           walk(full);
         } else {
           const ext = path.extname(entry).toLowerCase();
+          // IMPORTANT: plus de PDF côté serveur
           if ([".txt", ".md"].includes(ext)) {
             results.push({ path: full, mtimeMs: st.mtimeMs, size: st.size });
           }
@@ -64,8 +69,8 @@ function fileListFromDirs() {
 async function readFileText(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   try {
-    // On ne gère plus les PDF côté serveur pour éviter les problèmes de pdf-parse
     if (ext === ".pdf") {
+      // Sur le serveur on ignore les PDF pour éviter pdf-parse
       return "";
     } else {
       return fs.readFileSync(filePath, "utf-8");
@@ -79,6 +84,7 @@ async function readFileText(filePath) {
 function loadState() {
   let memory = [];
   let scan = {};
+
   if (fs.existsSync(STORAGE_FILE)) {
     try {
       memory = JSON.parse(fs.readFileSync(STORAGE_FILE, "utf-8"));
@@ -86,6 +92,7 @@ function loadState() {
       console.log("[IA] Impossible de lire brain_memory.json, on repart vide.");
     }
   }
+
   if (fs.existsSync(STATE_FILE)) {
     try {
       scan = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
@@ -93,6 +100,7 @@ function loadState() {
       console.log("[Scan] Impossible de lire scan_state.json, on repart de zéro.");
     }
   }
+
   return { memory, scan };
 }
 
@@ -132,6 +140,42 @@ function findBestMatch(memory, query, k = 1) {
   return scored.slice(0, k);
 }
 
+// rescans fichiers et met à jour memory si besoin
+async function reindexIfNeeded() {
+  const files = fileListFromDirs();
+  const { memory, scan } = loadState();
+
+  let changed = false;
+  const newScan = {};
+  const newMemory = [];
+
+  for (const f of files) {
+    newScan[f.path] = { mtimeMs: f.mtimeMs, size: f.size };
+    const prev = scan[f.path];
+
+    if (!prev || prev.mtimeMs !== f.mtimeMs || prev.size !== f.size) {
+      console.log("[Scan] (Re)lecture", f.path);
+      const txt = await readFileText(f.path);
+      if (!txt) continue;
+      const emb = embedText(txt);
+      newMemory.push({ path: f.path, text: txt, embedding: emb });
+      changed = true;
+    } else {
+      const old = memory.find(m => m.path === f.path);
+      if (old) newMemory.push(old);
+    }
+  }
+
+  if (changed || Object.keys(scan).length !== Object.keys(newScan).length) {
+    console.log("[Scan] Changements détectés, sauvegarde de l'état.");
+    saveState(newMemory, newScan);
+    return newMemory;
+  } else {
+    console.log("[Scan] Pas de changement dans les documents.");
+    return memory;
+  }
+}
+
 // =======================
 // FILTRE PRO / PERSO
 // =======================
@@ -146,7 +190,8 @@ function isProfessionalMessage(text) {
     "bar", "laverie", "retail", "hotel", "informations",
     "transport", "logistique", "camion", "remorque",
     "internet", "fibre", "connexion", "ittelecom",
-    "manovende", "manoverde", "mano verde", "gecotel"
+    "manovende", "manoverde", "mano verde", "gecotel",
+    "foyer", "biomasse", "cuisson", "energie", "énergie"
   ];
 
   const motsPerso = [
@@ -176,231 +221,194 @@ async function fetchSiteText(url) {
     const res = await axios.get(url, { timeout: 10000 });
     const html = res.data || "";
     const text = String(html)
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
       .replace(/<[^>]+>/g, " ")
-      .replace(/&nbsp;/g, " ")
-      .replace(/\s+/g, " ");
-    return text.slice(0, 4000);
+      .replace(/\s+/g, " ")
+      .trim();
+    return text.slice(0, 20000); // limite simple
   } catch (e) {
-    console.error("[Web] Erreur pour", url, e.message);
+    console.error("[Web] Impossible de récupérer", url, e.message);
     return "";
   }
 }
 
 // =======================
-// DÉTECTION DEMANDE FORMULAIRE
+// APPEL PERPLEXITY + GARDE-FOU
 // =======================
 
-function detectFormRequest(text) {
-  const t = text.toLowerCase();
-
-  if (t.includes("formulaire") || t.includes("fiche") || t.includes("souscription")) {
-    if (t.includes("transport") || t.includes("camion") || t.includes("logistique")) {
-      return FORMULAIRES.souscription_transport;
-    }
-    if (t.includes("restaurant") || t.includes("restauration") || t.includes("bar")) {
-      return FORMULAIRES.souscription_restaurant;
-    }
-    if (t.includes("prospectus") || t.includes("présentation") || t.includes("presentation")) {
-      return FORMULAIRES.prospectus_mano_verde;
-    }
-    return FORMULAIRES.souscription_transport;
-  }
-
-  return null;
-}
-
-// =======================
-// INDEXATION
-// =======================
-
-async function reindexIfNeeded() {
-  let { memory, scan } = loadState();
-
-  const files = fileListFromDirs();
-  console.log(`[IA] Fichiers trouvés : ${files.length}`);
-
-  const currentPaths = new Set(files.map(f => f.path));
-  memory = memory.filter(m => currentPaths.has(m.path));
-
-  for (const f of files) {
-    const prev = scan[f.path];
-    if (prev && prev.mtimeMs === f.mtimeMs && prev.size === f.size) {
-      continue;
-    }
-
-    const text = await readFileText(f.path);
-    if (!text || text.trim().length < 50) continue;
-
-    console.log(`[Indexation] Mise à jour : ${path.basename(f.path)}`);
-
-    memory = memory.filter(m => m.path !== f.path);
-
-    const emb = embedText(text);
-    memory.push({
-      path: f.path,
-      embedding: emb,
-      content: text.slice(0, 5000)
-    });
-
-    scan[f.path] = { mtimeMs: f.mtimeMs, size: f.size };
-    saveState(memory, scan);
-  }
-
-  console.log("[IA] Indexation terminée.");
-  return memory;
-}
-
-// =======================
-// APPEL PERPLEXITY (MANOVENDE)
-// =======================
-
-async function callPerplexity(contextText, userMessage) {
-  const apiKey = process.env.PERPLEXITY_API_KEY;
-  if (!apiKey) {
-    return "❌ PERPLEXITY_API_KEY manquante dans .env";
-  }
-
-  const webContexts = [];
-  webContexts.push(await fetchSiteText("https://manovende.com"));
-  webContexts.push(await fetchSiteText("https://social.manovende.com"));
-  const extraWeb = webContexts.filter(Boolean).join("\n\n");
-
-  const body = {
-    model: "sonar",
-    messages: [
-      {
-        role: "system",
-        content:
-          "Tu es un assistant commercial francophone. " +
-          "Tu ne mentionnes pas les noms des entreprises internes (Manovende, GECOTEL, Ittelecom, etc.) " +
-          "sauf si le client les mentionne lui-même. " +
-          "Tu réponds simplement en tant qu'« assistant commercial ». " +
-          "Tu utilises le contexte documentaire pour comprendre les produits, services et conditions, " +
-          "mais tu NE DONNES JAMAIS la structure détaillée des dossiers ou des fichiers. " +
-          "Tu NE DIVULGUES PAS d'informations explicitement internes, confidentielles ou sensibles " +
-          "(contrats détaillés, montants précis, coordonnées personnelles, numéros de documents, etc.). " +
-          "Si une question demande quelque chose de confidentiel, tu restes général ou tu expliques poliment " +
-          "que ces informations ne peuvent pas être partagées."
-      },
-      {
-        role: "user",
-        content:
-          "Contexte documentaire interne (extraits, uniquement pour toi, ne pas lister ces documents au client) :\n" +
-          contextText +
-          "\n\nContexte web Manovende (site officiel, réseaux sociaux) :\n" +
-          extraWeb +
-          "\n\nQuestion du client (réponds-lui directement, sans parler du 'contexte', des fichiers ou du site) :\n" +
-          userMessage
-      }
-    ]
-  };
-
+async function callPerplexity(question, context, webContexts) {
   try {
-    const resp = await axios.post("https://api.perplexity.ai/chat/completions", body, {
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      timeout: 60000
-    });
+    const apiKey = process.env.PERPLEXITY_API_KEY;
+    if (!apiKey) {
+      console.error("[IA] PERPLEXITY_API_KEY manquant.");
+      return null;
+    }
 
-    const choice = (resp.data.choices || [])[0] || {};
-    const msg = choice.message || {};
-    return msg.content || JSON.stringify(resp.data);
+    const webText = webContexts.filter(Boolean).join("\n\n---\n\n").slice(0, 20000);
+
+    const prompt =
+      "Tu es un assistant commercial Mano Verde / Manovende. " +
+      "Tu dois répondre uniquement à partir des informations suivantes " +
+      "et rester dans le contexte des produits et services de l'entreprise.\n\n" +
+      "=== CONTEXTE DOCUMENTS INTERNES ===\n" + (context || "") + "\n\n" +
+      "=== CONTEXTE SITES WEB ===\n" + webText + "\n\n" +
+      "Règles importantes :\n" +
+      "- Tu utilises toujours le terme « foyer de cuisson amélioré à biomasse » pour parler du produit, " +
+      "jamais « four à pyrolyse ».\n" +
+      "- Tu n'expliques pas la chimie de la pyrolyse, mais la manière d'utiliser le foyer au quotidien " +
+      "(allumage, ajout de biomasse, réglage de l'air, sécurité, confort).\n" +
+      "- Si la question n'a aucun rapport avec ces contextes, tu réponds explicitement que tu ne peux pas répondre.\n\n" +
+      "Question du client :\n" + question;
+
+    const body = {
+      model: "sonar",
+      messages: [
+        { role: "system", content: "Assistant commercial Mano Verde / Manovende." },
+        { role: "user", content: prompt }
+      ]
+    };
+
+    const resp = await axios.post(
+      "https://api.perplexity.ai/chat/completions",
+      body,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        },
+        timeout: 20000
+      }
+    );
+
+    const completion =
+      resp.data &&
+      resp.data.choices &&
+      resp.data.choices[0] &&
+      resp.data.choices[0].message &&
+      resp.data.choices[0].message.content;
+
+    let reply = (completion || "").trim();
+
+    // Garde-fou: réponse vide ou trop générique => on se tait
+    const lower = reply.toLowerCase();
+    const isTooGeneric =
+      reply.length < 40 ||
+      lower.includes("je ne sais pas") ||
+      lower.includes("je n'ai pas assez d'informations") ||
+      lower.includes("je ne dispose pas des informations nécessaires") ||
+      lower.includes("je ne peux pas répondre");
+
+    if (!reply || isTooGeneric) {
+      console.log("[IA] Réponse IA jugée non pertinente, aucune réponse envoyée.");
+      return null;
+    }
+
+    // Post-traitement vocabulaire produit
+    reply = reply.replace(/four(s)? (à|a) pyrolyse/gi, "foyer de cuisson amélioré à biomasse");
+    reply = reply.replace(/pyrolyse/gi, "processus de combustion optimisé");
+    reply = reply.replace(/foyer amélioré/gi, "foyer de cuisson amélioré à biomasse");
+    reply = reply.replace(/four (ecologique|écolo|écologique)/gi, "foyer de cuisson amélioré à biomasse");
+
+    // Ajout d'un paragraphe pratique (sans dévoiler de secrets industriels)
+    reply += "\n\nEn pratique, vous l'utilisez comme un foyer de cuisson classique : " +
+      "vous allumez le feu avec un petit allume-feu, ajoutez progressivement la biomasse bien sèche " +
+      "et réglez l'arrivée d'air pour obtenir une flamme stable et propre.";
+
+    return reply;
   } catch (e) {
-    console.error("[Perplexity] Erreur:", e.message);
-    return "❌ Erreur lors de l'appel à l'IA.";
+    console.error("[IA] Erreur Perplexity:", e.message);
+    // Silence en cas d'erreur IA
+    return null;
   }
 }
 
 // =======================
-// WHATSAPP
+// CLIENT WHATSAPP
 // =======================
 
-async function start() {
-  const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      headless: true
+const client = new Client({
+  authStrategy: new LocalAuth({
+    clientId: "monbot-vps"
+  }),
+  puppeteer: {
+    executablePath: "/root/.cache/puppeteer/chrome/linux-145.0.7632.77/chrome-linux64/chrome",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    headless: true
+  }
+});
+
+client.on("qr", qr => {
+  console.log("[WhatsApp] QR code reçu, scanne-le pour connecter le bot :");
+  qrcode.generate(qr, { small: true });
+});
+
+client.on("ready", async () => {
+  console.log("[WhatsApp] Connecté avec succès.");
+  await reindexIfNeeded();
+});
+
+client.on("message", async msg => {
+  try {
+    const chat = await msg.getChat();
+
+    const from = msg.from;
+    const to = msg.to;
+
+    // 1) Bloquer TOUT ce qui implique ton propre numéro (statut, notes, etc.)
+    if (from === MON_NUMERO || to === MON_NUMERO) {
+      return;
     }
-  });
 
-  client.on("qr", qr => qrcode.generate(qr, { small: true }));
+    // 2) Ignorer les groupes
+    if (chat.isGroup) return;
 
-  client.on("ready", async () => {
-    console.log("[WhatsApp] Connecté avec succès.");
+    const texte = (msg.body || "").trim();
+    if (!texte) return;
 
-    const memory = await reindexIfNeeded();
-    console.log(`[IA] Mémoire de travail : ${memory.length} documents.`);
+    // 3) Filtre pro/perso
+    if (!isProfessionalMessage(texte)) {
+      console.log("[Filtre] Message jugé personnel, aucune réponse.");
+      return;
+    }
 
-    // IMPORTANT : ne pas envoyer de message automatique vers ton propre numéro
-    // pour ne pas ouvrir la conversation "Notes / Statut" :
-    // await client.sendMessage(MON_NUMERO, "✅ Assistant commercial IA prêt sur WhatsApp.");
+    // 4) Recherche dans la mémoire locale
+    const { memory } = loadState();
+    if (!memory || memory.length === 0) {
+      console.log("[IA] Mémoire vide, aucune réponse.");
+      return;
+    }
 
-    client.on("message", async msg => {
-      const chat = await msg.getChat();
+    const bestArr = findBestMatch(memory, texte, 1);
+    const best = bestArr[0];
 
-      // 1) Ignorer les groupes
-      if (chat.isGroup) return;
+    // Seuil de similarité minimal : silence si hors contexte
+    if (!best || best.score < 0.2) {
+      console.log("[IA] Question hors contexte (score:", best ? best.score : "null", "), aucune réponse.");
+      return;
+    }
 
-      // 2) Récupérer les IDs
-      const from = msg.from;
-      const to = msg.to;
+    const context = best.doc.text;
 
-      // 3) Bloquer TOUT échange où ton numéro parle à ton numéro
-      //    (c'est la conversation "Notes / Story / Statut")
-      if (from === MON_NUMERO && to === MON_NUMERO) {
-        return;
-      }
+    // 5) Contexte web ManoVende
+    const webContexts = [];
+    webContexts.push(await fetchSiteText("https://manovende.com"));
+    webContexts.push(await fetchSiteText("https://social.manovende.com"));
 
-      // 4) Filtre pro/perso sur le contenu
-      if (!isProfessionalMessage(msg.body)) {
-        return;
-      }
+    // 6) Appel IA avec garde-fou
+    const answer = await callPerplexity(texte, context, webContexts);
 
-      try {
-        const best = findBestMatch(memory, msg.body, 1);
-        if (!best.length) {
-          return;
-        }
+    if (!answer) {
+      // IA pas sûre / erreur / hors contexte -> silence
+      return;
+    }
 
-        const doc = best[0].doc;
-        await chat.sendStateTyping();
+    await msg.reply(answer);
+  } catch (e) {
+    console.error("[Bot] Erreur handler message:", e.message);
+    // Silence côté client
+    return;
+  }
+});
 
-        const reply = await callPerplexity(doc.content, msg.body);
-
-        // Envoi éventuel d'un formulaire PDF
-        const pdfPath = detectFormRequest(msg.body);
-        if (pdfPath && fs.existsSync(pdfPath)) {
-          try {
-            await chat.sendStateTyping();
-            await msg.reply("Je vous envoie le formulaire en pièce jointe.");
-            await msg.reply(fs.createReadStream(pdfPath));
-          } catch (e) {
-            console.error("[WhatsApp] Erreur envoi PDF:", e);
-          }
-        }
-
-        // Latence 2–5s par ligne puis réponse texte
-        const lines = String(reply).split("\n").filter(l => l.trim().length > 0);
-        let delay = 0;
-        for (const line of lines) {
-          const extra = Math.min(5, Math.max(2, Math.floor(line.length / 40)));
-          delay += extra;
-        }
-        await new Promise(r => setTimeout(r, delay * 1000));
-
-        await msg.reply(reply);
-      } catch (e) {
-        console.error("[WhatsApp] Erreur message:", e);
-      }
-    });
-  });
-
-  client.initialize();
-}
-
-start();
+client.initialize();
